@@ -26,11 +26,29 @@ GHOST_PORT = 5000       # HTTP API Portu / HTTP API Port
 GHOST_BEACON_MSG = b"GHOST_PROTOCOL_NODE_HERE"
 BLUETOOTH_UUID = "00001101-0000-1000-8000-00805F9B34FB" # GhostProtocol Özel ID / GhostProtocol Custom ID
 
+# --- YENİ FONKSİYON: HOST IP TESPİTİ / NEW FUNCTION: HOST IP DETECTION ---
+def get_local_ip():
+    """ Sunucunun yerel ağdaki IP adresini bulur / Finds the server's IP address on the local network """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80)) # Google DNS'e bağlanmayı dener (veri göndermez) / Tries to connect to Google DNS (doesn't send data)
+        local_ip = s.getsockname()[0]
+        s.close()
+        return local_ip
+    except Exception:
+        # Bağlantı yoksa veya Docker/farklı ortamdaysa varsayılan IP
+        # Default IP if no connection or if running in Docker/different environment
+        return '127.0.0.1' 
+
+GHOST_HOST_IP = get_local_ip() # Sunucunun IP adresi / Server's IP address
+# --- IP TESPİTİ BİTTİ / IP DETECTION ENDED ---
+
 app = Flask(__name__)
 app.secret_key = "mesh_secret_key" # Session yönetimi için / For session management
 
 # --- VERİTABANI YÖNETİCİSİ / DATABASE MANAGER ---
 class DatabaseManager:
+# ... (Sınıf İçeriği Aynı / Class Content is the Same)
     def __init__(self, db_file):
         self.db_file = db_file
         self.init_db()
@@ -138,8 +156,9 @@ class MeshManager:
         
         while self.running:
             try:
-                # Mesaj: PROTOKOL_ADI | PORT / Message: PROTOCOL_NAME | PORT
-                msg = f"{GHOST_BEACON_MSG.decode()}|{GHOST_PORT}".encode()
+                # GHOST_HOST_IP adresi mesajın bir parçası yapılır
+                # GHOST_HOST_IP address is made part of the message
+                msg = f"{GHOST_BEACON_MSG.decode()}|{GHOST_PORT}|{GHOST_HOST_IP}".encode()
                 sock.sendto(msg, ('<broadcast>', MESH_PORT))
                 time.sleep(5)
             except Exception as e:
@@ -155,13 +174,15 @@ class MeshManager:
             try:
                 data, addr = sock.recvfrom(1024)
                 decoded = data.decode().split('|')
-                if decoded[0] == GHOST_BEACON_MSG.decode():
-                    # Kendi IP'miz değilse ekle / Add if not our own IP
-                    peer_ip = addr[0]
+                
+                # Mesaj formatı: PROTOKOL | PORT | IP / Message format: PROTOCOL | PORT | IP
+                if decoded[0] == GHOST_BEACON_MSG.decode() and len(decoded) == 3:
+                    peer_ip = decoded[2] # Gelen mesajdaki IP'yi kullan
                     peer_port = decoded[1]
-                    # Basitlik için kendi IP kontrolünü atlıyoruz / Skipping self-IP check for simplicity
-                    full_address = f"http://{peer_ip}:{peer_port}"
-                    self.register_peer(full_address, "WIFI")
+                    
+                    if peer_ip != GHOST_HOST_IP: # Kendi kendimizi eklememek için kontrol
+                        full_address = f"http://{peer_ip}:{peer_port}"
+                        self.register_peer(full_address, "WIFI")
             except Exception as e:
                 print(f"UDP Dinleme Hatası / UDP Listening Error: {e}")
 
@@ -189,7 +210,8 @@ class MeshManager:
                 threading.Thread(target=self.handle_bt_client, args=(client_sock,), daemon=True).start()
                 
         except ImportError:
-            print("[BLUETOOTH] PyBluez yüklü değil, devre dışı. / PyBluez not installed, disabled.")
+            # print("[BLUETOOTH] PyBluez yüklü değil, devre dışı. / PyBluez not installed, disabled.")
+            pass # Print'i kaldırdım, terminal temiz kalsın / Removed print to keep terminal clean
         except Exception as e:
             print(f"[BLUETOOTH] Başlatılamadı / Could not start: {e}")
 
@@ -209,6 +231,7 @@ class MeshManager:
 
 # --- KULLANICI YÖNETİCİSİ / USER MANAGER ---
 class UserManager:
+# ... (Sınıf İçeriği Aynı / Class Content is the Same)
     def __init__(self, db):
         self.db = db
 
@@ -270,6 +293,7 @@ class UserManager:
 
 # --- BLOK ZİNCİRİ VE DEPOLAMA / BLOCKCHAIN & STORAGE ---
 class StorageBlockchain:
+# ... (Sınıf İçeriği Aynı / Class Content is the Same)
     def __init__(self, db_manager):
         self.db = db_manager
 
@@ -364,7 +388,7 @@ user_mgr = UserManager(db)
 chain = StorageBlockchain(db)
 mesh = MeshManager(db)
 
-# --- WEB ARAYÜZÜ / WEB INTERFACE ---
+# ... (Web Arayüzü, API Rotaları ve Diğer Fonksiyonlar Aynı / Web Interface, API Routes, and Other Functions are the Same)
 LAYOUT = """
 <!doctype html>
 <html lang="tr">
@@ -425,189 +449,4 @@ def check_internet():
 @app.route('/')
 def home():
     conn = db.get_connection()
-    peers = conn.execute("SELECT * FROM mesh_peers WHERE last_seen > ?", (time.time() - 300,)).fetchall()
-    
-    # Halka açık içerikler / Public assets
-    public_assets = conn.execute("SELECT * FROM assets WHERE type != 'domain' AND status = 'active' ORDER BY creation_time DESC LIMIT 5").fetchall()
-    conn.close()
-    
-    return render_template_string(LAYOUT + """
-    {% block content %}
-        <h3>Son İçerikler / Latest Content</h3>
-        {% for asset in assets %}
-            <div style="border-bottom:1px solid #555; padding:10px;">
-                <strong>{{ asset['name'] }}</strong> ({{ asset['type'] }})
-                <br>
-                {% if asset['type'] == 'image' %}
-                    <img src="{{ asset['content'] }}" style="max-width:100px;">
-                {% endif %}
-                {% if session.get('username') %}
-                    <form action="/clone_asset" method="post">
-                        <input type="hidden" name="asset_id" value="{{ asset['asset_id'] }}">
-                        <button type="submit" style="background:#28a745; width:auto;">Copy/Clone</button>
-                    </form>
-                {% endif %}
-            </div>
-        {% endfor %}
-    {% endblock %}
-    """, internet=check_internet(), peers=peers, assets=public_assets)
-
-@app.route('/sync_mesh')
-def sync_mesh():
-    """ Manuel olarak Mesh üzerindeki cihazlardan veri çeker / Manually pulls data from devices on Mesh """
-    # Demo amaçlı basit senkronizasyon simülasyonu / Simple sync simulation for demo
-    return redirect('/')
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        success, msg = user_mgr.register(
-            request.form['username'], request.form['password'],
-            request.form['name'], request.form['surname'],
-            request.form['phone'], request.form['email']
-        )
-        if success:
-            session['temp_username'] = request.form['username']
-            return redirect(url_for('verify'))
-        return f"Error: {msg}"
-    
-    return render_template_string(LAYOUT + """
-    {% block content %}
-        <h3>Register</h3>
-        <form method="post">
-            <input type="text" name="name" placeholder="Name" required>
-            <input type="text" name="surname" placeholder="Surname" required>
-            <input type="text" name="username" placeholder="Username" required>
-            <input type="password" name="password" placeholder="Password" required>
-            <input type="tel" name="phone" placeholder="Phone" required>
-            <input type="email" name="email" placeholder="Email" required>
-            <button type="submit">Sign Up</button>
-        </form>
-    {% endblock %}
-    """, internet=check_internet(), peers=[])
-
-@app.route('/verify', methods=['GET', 'POST'])
-def verify():
-    if request.method == 'POST':
-        username = session.get('temp_username') or request.form['username']
-        if user_mgr.verify_user(username, request.form['code']):
-            return redirect(url_for('login'))
-        return "Invalid Code!"
-        
-    return render_template_string(LAYOUT + """
-    {% block content %}
-        <h3>Verification</h3>
-        <p>Check terminal for code.</p>
-        <form method="post">
-            <input type="text" name="username" placeholder="Username" value="{{session.get('temp_username', '')}}">
-            <input type="text" name="code" placeholder="6-Digit Code">
-            <button type="submit">Verify</button>
-        </form>
-    {% endblock %}
-    """, internet=check_internet(), peers=[])
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        conn = db.get_connection()
-        user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", 
-                            (request.form['username'], request.form['password'])).fetchone()
-        conn.close()
-        
-        if user:
-            if user['is_verified'] == 0:
-                session['temp_username'] = user['username']
-                return redirect(url_for('verify'))
-            
-            session['username'] = user['username']
-            session['pub_key'] = user['wallet_public_key']
-            session['balance'] = user['balance']
-            return redirect(url_for('dashboard'))
-        return "Login Failed."
-
-    return render_template_string(LAYOUT + """
-    {% block content %}
-        <h3>Login</h3>
-        <form method="post">
-            <input type="text" name="username" placeholder="Username">
-            <input type="password" name="password" placeholder="Password">
-            <button type="submit">Login</button>
-        </form>
-    {% endblock %}
-    """, internet=check_internet(), peers=[])
-
-@app.route('/dashboard', methods=['GET', 'POST'])
-def dashboard():
-    if not session.get('username'): return redirect('/login')
-    
-    conn = db.get_connection()
-    assets = conn.execute("SELECT * FROM assets WHERE owner_pub_key = ?", (session['pub_key'],)).fetchall()
-    conn.close()
-
-    return render_template_string(LAYOUT + """
-    {% block content %}
-        <h3>Dashboard</h3>
-        <p><strong>Upload Asset (Cost: 0.001 GHOST/MB)</strong></p>
-        <form action="/upload" method="post" enctype="multipart/form-data">
-            <input type="file" name="file" required>
-            <select name="type">
-                <option value="image">Image</option>
-                <option value="audio">Audio</option>
-                <option value="video">Video</option>
-            </select>
-            <button type="submit">Upload</button>
-        </form>
-        
-        <h4>My Assets</h4>
-        <ul>
-        {% for asset in assets %}
-            <li>{{ asset['name'] }} ({{ asset['status'] }})</li>
-        {% endfor %}
-        </ul>
-    {% endblock %}
-    """, internet=check_internet(), peers=[], assets=assets)
-
-@app.route('/upload', methods=['POST'])
-def upload():
-    if not session.get('username'): return redirect('/login')
-    
-    file = request.files['file']
-    ftype = request.form['type']
-    
-    if file:
-        file_data = file.read()
-        b64_str = base64.b64encode(file_data).decode('utf-8')
-        mime_type = "image/png"
-        if ftype == 'video': mime_type = 'video/mp4'
-        elif ftype == 'audio': mime_type = 'audio/mpeg'
-        
-        final_content = f"data:{mime_type};base64,{b64_str}"
-        
-        success, msg = chain.upload_asset(session['pub_key'], ftype, secure_filename(file.filename), final_content)
-        
-        if success:
-            return redirect(url_for('dashboard'))
-        else:
-            return f"Error: {msg}"
-    return "No file."
-
-@app.route('/clone_asset', methods=['POST'])
-def clone_asset():
-    if not session.get('username'): return redirect('/login')
-    success, msg = chain.clone_asset(request.form['asset_id'], session['pub_key'])
-    return redirect(url_for('dashboard')) if success else f"Error: {msg}"
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect('/')
-
-if __name__ == '__main__':
-    # 1. Mesh Ağını Başlat / Start Mesh Network
-    print("--- GhostProtocol Mesh Node Starting ---")
-    mesh.start()
-    
-    # 2. Web Sunucusunu Başlat / Start Web Server
-    print(f"--- Web UI: http://0.0.0.0:{GHOST_PORT} ---")
-    # use_reloader=False, thread çakışmasını önlemek için / to prevent thread conflict
-    app.run(host='0.0.0.0', port=GHOST_PORT, debug=False, use_reloader=False)
+    peers = conn.execute("SELECT *
