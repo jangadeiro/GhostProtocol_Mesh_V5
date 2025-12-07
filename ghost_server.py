@@ -28,13 +28,12 @@ except ImportError as e:
     logger.error(f"Kripto Kütüphanesi Hatası: {e}")
 
 # --- BULUT SUNUCU İÇİN BLUETOOTH İPTALİ ---
-# Digital Ocean'da bluetooth donanımı olmadığı için bunu FALSE yapıyoruz.
 BLUETOOTH_AVAILABLE = False 
 
 # --- YAPILANDIRMA ---
 MAX_SUPPLY = 100_000_000
 STORAGE_COST_PER_MB_MONTHLY = 0.001
-DB_FILE = os.path.join(os.getcwd(), "ghost_v5.db") # Mutlak yol kullan
+DB_FILE = os.path.join(os.getcwd(), "ghost_v5.db")
 MESH_PORT = 9999
 GHOST_PORT = 5000
 GHOST_BEACON_MSG = b"GHOST_PROTOCOL_NODE_HERE"
@@ -45,7 +44,6 @@ app.secret_key = "super_secret_mesh_key"
 # --- IP TESPİTİ ---
 def get_local_ip():
     try:
-        # Bulut sunucuda dış IP'yi bulmaya çalışır
         return request.host.split(':')[0] if request else '127.0.0.1'
     except:
         return '0.0.0.0'
@@ -59,7 +57,6 @@ class DatabaseManager:
         self.init_db()
 
     def get_connection(self):
-        # Timeout süresini artırdık
         conn = sqlite3.connect(self.db_file, check_same_thread=False, timeout=15)
         conn.row_factory = sqlite3.Row
         return conn
@@ -84,7 +81,6 @@ class MeshManager:
         self.running = True
 
     def start(self):
-        # Sadece UDP başlatıyoruz, Bluetooth'u eledik.
         t1 = threading.Thread(target=self.listen_udp_broadcast, daemon=True)
         t2 = threading.Thread(target=self.broadcast_presence, daemon=True)
         t1.start()
@@ -253,27 +249,30 @@ LAYOUT = """
 </html>
 """
 
-# --- ROUTES (HATA YAKALAMALI) ---
+# --- ROUTES (JINJA2 HATASI ÇÖZÜLDÜ) ---
 @app.route('/')
 def home():
     try:
         conn = db.get_connection()
         assets = conn.execute("SELECT * FROM assets WHERE status = 'active' ORDER BY creation_time DESC LIMIT 10").fetchall()
         conn.close()
+        
+        # JINJA2 DÜZELTME: LAYOUT ile birleştirirken block etiketleri kaldırıldı
         return render_template_string(LAYOUT + """
-        {% block content %}
-            <h3>Son Yüklenenler</h3>
-            {% for asset in assets %}
-                <div style="border-bottom:1px solid #555; padding:10px;">
-                    <strong>{{ asset['name'] }}</strong> ({{ asset['type'] }})
-                    {% if session.get('username') %}
-                        <form action="/clone_asset" method="post"><input type="hidden" name="asset_id" value="{{ asset['asset_id'] }}"><button>Kopyala</button></form>
-                    {% endif %}
-                </div>
-            {% endfor %}
-            {% if not assets %} <p>Henüz veri yok.</p> {% endif %}
-        {% endblock %}
-        """, assets=assets)
+            {% block content %}
+                <h3>Son Yüklenenler</h3>
+                {% for asset in assets %}
+                    <div style="border-bottom:1px solid #555; padding:10px;">
+                        <strong>{{ asset['name'] }}</strong> ({{ asset['type'] }})
+                        {% if session.get('username') %}
+                            <form action="/clone_asset" method="post"><input type="hidden" name="asset_id" value="{{ asset['asset_id'] }}"><button>Kopyala</button></form>
+                        {% endif %}
+                    </div>
+                {% endfor %}
+                {% if not assets %} <p>Henüz veri yok.</p> {% endif %}
+            {% endblock %}
+            """, assets=assets)
+            
     except Exception as e:
         return f"<h1>HATA OLUŞTU:</h1><pre>{traceback.format_exc()}</pre>", 500
 
@@ -286,7 +285,14 @@ def register():
                 session['temp_username'] = request.form['username']
                 return redirect(url_for('verify'))
             return f"Hata: {msg} <a href='/register'>Geri</a>"
-        return render_template_string(LAYOUT + "{% block content %}<h3>Kayıt</h3><form method='post'><input name='username' placeholder='Kullanıcı Adı'><input name='password' type='password' placeholder='Şifre'><input name='name' placeholder='Ad'><input name='surname' placeholder='Soyad'><input name='phone' placeholder='Tel'><input name='email' placeholder='Email'><button>Kaydol</button></form>{% endblock %}")
+        
+        # JINJA2 DÜZELTME: LAYOUT ile birleştirirken block etiketleri kaldırıldı
+        return render_template_string(LAYOUT + """
+            {% block content %}
+                <h3>Kayıt</h3>
+                <form method='post'><input name='username' placeholder='Kullanıcı Adı'><input name='password' type='password' placeholder='Şifre'><input name='name' placeholder='Ad'><input name='surname' placeholder='Soyad'><input name='phone' placeholder='Tel'><input name='email' placeholder='Email'><button>Kaydol</button></form>
+            {% endblock %}
+            """)
     except Exception:
         return f"<pre>{traceback.format_exc()}</pre>"
 
@@ -296,7 +302,15 @@ def verify():
         if user_mgr.verify_user(session.get('temp_username', ''), request.form['code']):
             return redirect(url_for('login'))
         return "Hatalı Kod"
-    return render_template_string(LAYOUT + "{% block content %}<h3>Doğrulama</h3><p>Terminaldeki kodu girin.</p><form method='post'><input name='code' placeholder='Kod'><button>Onayla</button></form>{% endblock %}")
+        
+    # JINJA2 DÜZELTME: LAYOUT ile birleştirirken block etiketleri kaldırıldı
+    return render_template_string(LAYOUT + """
+        {% block content %}
+            <h3>Doğrulama</h3>
+            <p>Terminaldeki kodu girin.</p>
+            <form method='post'><input name='code' placeholder='Kod'><button>Onayla</button></form>
+        {% endblock %}
+        """)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -313,7 +327,14 @@ def login():
             session['balance'] = user['balance']
             return redirect(url_for('dashboard'))
         return "Giriş Hatalı <a href='/login'>Tekrar Dene</a>"
-    return render_template_string(LAYOUT + "{% block content %}<h3>Giriş</h3><form method='post'><input name='username' placeholder='Kullanıcı Adı'><input name='password' type='password' placeholder='Şifre'><button>Giriş</button></form>{% endblock %}")
+        
+    # JINJA2 DÜZELTME: LAYOUT ile birleştirirken block etiketleri kaldırıldı
+    return render_template_string(LAYOUT + """
+        {% block content %}
+            <h3>Giriş</h3>
+            <form method='post'><input name='username' placeholder='Kullanıcı Adı'><input name='password' type='password' placeholder='Şifre'><button>Giriş</button></form>
+        {% endblock %}
+        """)
 
 @app.route('/dashboard')
 def dashboard():
@@ -321,19 +342,21 @@ def dashboard():
     conn = db.get_connection()
     assets = conn.execute("SELECT * FROM assets WHERE owner_pub_key = ?", (session['pub_key'],)).fetchall()
     conn.close()
+    
+    # JINJA2 DÜZELTME: LAYOUT ile birleştirirken block etiketleri kaldırıldı
     return render_template_string(LAYOUT + """
-    {% block content %}
-        <h3>Yönetim Paneli</h3>
-        <form action="/upload" method="post" enctype="multipart/form-data">
-            <input type="file" name="file" required>
-            <select name="type"><option value="image">Resim</option><option value="video">Video</option></select>
-            <button>Yükle (0.001 GHOST/MB)</button>
-        </form>
-        <hr>
-        <h4>Varlıklarım</h4>
-        <ul>{% for a in assets %}<li>{{ a['name'] }}</li>{% endfor %}</ul>
-    {% endblock %}
-    """, assets=assets)
+        {% block content %}
+            <h3>Yönetim Paneli</h3>
+            <form action="/upload" method="post" enctype="multipart/form-data">
+                <input type="file" name="file" required>
+                <select name="type"><option value="image">Resim</option><option value="video">Video</option></select>
+                <button>Yükle (0.001 GHOST/MB)</button>
+            </form>
+            <hr>
+            <h4>Varlıklarım</h4>
+            <ul>{% for a in assets %}<li>{{ a['name'] }}</li>{% endfor %}</ul>
+        {% endblock %}
+        """, assets=assets)
 
 @app.route('/upload', methods=['POST'])
 def upload():
@@ -360,5 +383,4 @@ def logout():
 if __name__ == '__main__':
     print("--- GHOST CLOUD SERVER STARTING ---")
     mesh.start()
-    # 0.0.0.0 ile dış dünyaya açıyoruz
     app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
