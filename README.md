@@ -46,7 +46,6 @@ GhostProtocol is a Proof-of-Work (PoW) blockchain designed to function as a surv
 
 **Prerequisites:** Python 3.9+
 
-```bash
 # 1. Clone the repository
 git clone [https://github.com/your-username/ghostprotocol.git](https://github.com/your-username/ghostprotocol.git)
 cd ghostprotocol
@@ -61,7 +60,6 @@ A. Run as a Mesh Node (Client/Field Device)
 For laptops, Raspberry Pis, or personal computers. It connects to the Cloud when online and peers when offline.
 
 Bash
-
 python ghost_mesh_node.py
 Access: http://localhost:5001
 
@@ -71,7 +69,6 @@ B. Run as a Cloud Server (Mainnet Backbone)
 For VPS (DigitalOcean, AWS, etc.). Acts as the primary data repository.
 
 Bash
-
 python ghost_server.py
 Access: http://YOUR_SERVER_IP:5000
 
