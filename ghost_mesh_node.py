@@ -8,382 +8,472 @@ import socket
 import threading
 import sys
 import logging
-from flask import Flask, jsonify, request, render_template_string, session, redirect, url_for
+import traceback
+import os
+import requests
+from flask import Flask, jsonify, request, render_template_string, session, redirect, url_for, Response
 from uuid import uuid4
-from urllib.parse import urlparse
 from werkzeug.utils import secure_filename
 
-# --- LOGLAMA AYARLARI (Hata tespiti için) ---
+# --- LOGLAMA / LOGGING ---
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("GhostNode")
+logger = logging.getLogger("GhostMesh")
 
-# --- GÜVENLİ IMPORTLAR ---
-# Cryptography ve Bluetooth yoksa sistemin çökmesini engelle
-try:
-    from cryptography.hazmat.primitives.asymmetric import rsa, padding
-    from cryptography.hazmat.primitives import serialization, hashes
-    CRYPTO_AVAILABLE = True
-except ImportError:
-    CRYPTO_AVAILABLE = False
-    logger.warning("UYARI: 'cryptography' kütüphanesi eksik. İmzalama çalışmayacak.")
-
-try:
-    import bluetooth
-    BLUETOOTH_AVAILABLE = True
-except ImportError:
-    BLUETOOTH_AVAILABLE = False
-    logger.warning("UYARI: 'pybluez' eksik. Bluetooth Mesh devre dışı.")
-
-# --- YAPILANDIRMA ---
-MAX_SUPPLY = 100_000_000
-STORAGE_COST_PER_MB_MONTHLY = 0.001
-GRACE_PERIOD_SECONDS = 86400
-DB_FILE = "ghost_v5.db"
+# --- YAPILANDIRMA / CONFIGURATION ---
+CLOUD_SERVER_IP = "http://46.101.219.46:5000" # Sizin Cloud Sunucunuz / Your Cloud Server
+MINING_DIFFICULTY = 4
+DB_FILE = os.path.join(os.getcwd(), "ghost_mesh.db")
 MESH_PORT = 9999
-GHOST_PORT = 5000
+GHOST_PORT = 5001 # Local node portu
+DOMAIN_EXPIRY_SECONDS = 15552000 # 6 Ay / 6 Months
+STORAGE_COST_PER_MB = 0.001
 GHOST_BEACON_MSG = b"GHOST_PROTOCOL_NODE_HERE"
-BLUETOOTH_UUID = "00001101-0000-1000-8000-00805F9B34FB"
 
 app = Flask(__name__)
-app.secret_key = "super_secret_mesh_key"
+app.secret_key = "mesh_secret"
 
-# --- IP TESPİTİ ---
-def get_local_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
-        return local_ip
-    except Exception:
-        return '127.0.0.1'
-
-GHOST_HOST_IP = get_local_ip()
-
-# --- VERİTABANI YÖNETİCİSİ (Düzeltildi: Timeout Eklendi) ---
+# --- VERİTABANI YÖNETİCİSİ / DATABASE MANAGER ---
 class DatabaseManager:
     def __init__(self, db_file):
         self.db_file = db_file
         self.init_db()
 
     def get_connection(self):
-        # timeout=10 ekleyerek "Database is locked" hatalarını engelliyoruz
-        conn = sqlite3.connect(self.db_file, check_same_thread=False, timeout=10)
+        conn = sqlite3.connect(self.db_file, check_same_thread=False, timeout=15)
         conn.row_factory = sqlite3.Row
         return conn
 
     def init_db(self):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, name TEXT, surname TEXT, phone TEXT, email TEXT, is_verified INTEGER DEFAULT 0, verification_code TEXT, wallet_private_key TEXT, wallet_public_key TEXT UNIQUE, balance REAL DEFAULT 0)''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS blocks (block_index INTEGER PRIMARY KEY, timestamp REAL, proof INTEGER, previous_hash TEXT, block_hash TEXT)''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS assets (asset_id TEXT PRIMARY KEY, owner_pub_key TEXT, type TEXT, name TEXT, content BLOB, storage_size INTEGER, creation_time REAL, last_payment_time REAL, status TEXT DEFAULT 'active')''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS mesh_peers (ip_address TEXT PRIMARY KEY, last_seen REAL, method TEXT)''')
-        conn.commit()
-        conn.close()
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            # Kullanıcılar / Users
+            cursor.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, wallet_public_key TEXT UNIQUE, balance REAL DEFAULT 0)''')
+            # Varlıklar (Süre ve Gizlilik eklendi) / Assets (Expiry and Privacy added)
+            cursor.execute('''CREATE TABLE IF NOT EXISTS assets (asset_id TEXT PRIMARY KEY, owner_pub_key TEXT, type TEXT, name TEXT, content BLOB, storage_size INTEGER, creation_time REAL, expiry_time REAL, is_public INTEGER DEFAULT 1)''')
+            # Bloklar / Blocks
+            cursor.execute('''CREATE TABLE IF NOT EXISTS blocks (block_index INTEGER PRIMARY KEY, timestamp REAL, proof INTEGER, previous_hash TEXT, block_hash TEXT)''')
+            # Mesh Ağındaki Cihazlar / Mesh Peers
+            cursor.execute('''CREATE TABLE IF NOT EXISTS mesh_peers (ip_address TEXT PRIMARY KEY, last_seen REAL, method TEXT)''')
+            
+            if cursor.execute("SELECT COUNT(*) FROM blocks").fetchone()[0] == 0:
+                self.create_genesis_block(cursor)
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.critical(f"DB Init Error: {e}")
 
-# --- MANAGER SINIFLARI ---
-class MeshManager:
+    def create_genesis_block(self, cursor):
+        genesis_hash = hashlib.sha256(json.dumps({'index': 1}, sort_keys=True).encode()).hexdigest()
+        cursor.execute("INSERT INTO blocks (block_index, timestamp, proof, previous_hash, block_hash) VALUES (?, ?, ?, ?, ?)",
+                       (1, time.time(), 1, '0', genesis_hash))
+
+# --- SENKRONİZASYON YÖNETİCİSİ / SYNC MANAGER ---
+class SyncManager:
     def __init__(self, db_manager):
         self.db = db_manager
         self.running = True
 
-    def start(self):
-        threading.Thread(target=self.listen_udp_broadcast, daemon=True).start()
-        threading.Thread(target=self.broadcast_presence, daemon=True).start()
-        if BLUETOOTH_AVAILABLE:
-            threading.Thread(target=self.start_bluetooth_server, daemon=True).start()
+    def start_background_sync(self):
+        # Arka planda periyodik olarak senkronizasyon dener / Periodically attempts sync in background
+        thread = threading.Thread(target=self._sync_loop, daemon=True)
+        thread.start()
 
-    def register_peer(self, ip, method="WIFI"):
-        conn = self.db.get_connection()
+    def _sync_loop(self):
+        while self.running:
+            self.sync_with_cloud()
+            self.sync_with_mesh()
+            time.sleep(30) # 30 saniyede bir dene / Try every 30 seconds
+
+    def sync_with_cloud(self):
+        # Bulut sunucusu ile senkronizasyon / Sync with Cloud Server
         try:
-            conn.execute("INSERT OR REPLACE INTO mesh_peers (ip_address, last_seen, method) VALUES (?, ?, ?)", 
-                         (ip, time.time(), method))
-            conn.commit()
+            logger.info("Bulut Sunucuya bağlanılıyor... / Connecting to Cloud Server...")
+            response = requests.get(f"{CLOUD_SERVER_IP}/chain", timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                self._update_local_chain(data)
         except Exception as e:
-            logger.error(f"Peer Kayıt Hatası: {e}")
-        finally:
-            conn.close()
+            logger.warning(f"Bulut bağlantısı yok (Offline Mod) / No Cloud connection: {e}")
 
-    def broadcast_presence(self):
+    def sync_with_mesh(self):
+        # Yerel ağdaki (Mesh) diğer cihazlardan veri çek / Pull data from peers in local mesh
+        conn = self.db.get_connection()
+        peers = conn.execute("SELECT ip_address FROM mesh_peers WHERE last_seen > ?", (time.time() - 300,)).fetchall()
+        conn.close()
+        
+        for peer in peers:
+            try:
+                # Peer IP'sine HTTP isteği at (WiFi Mesh)
+                response = requests.get(f"{peer['ip_address']}/chain", timeout=2)
+                if response.status_code == 200:
+                    self._update_local_chain(response.json())
+            except:
+                pass
+
+    def _update_local_chain(self, remote_data):
+        # En Uzun Zincir Kuralı / Longest Chain Rule
+        conn = self.db.get_connection()
+        local_len = conn.execute("SELECT MAX(block_index) FROM blocks").fetchone()[0] or 0
+        
+        if remote_data['length'] > local_len:
+            logger.info(f"Yeni zincir bulundu. Yerel: {local_len}, Uzak: {remote_data['length']}. Güncelleniyor...")
+            
+            # Veritabanını güncelle / Update Database
+            # NOT: Gerçek bir blockchain'de bu işlem çok daha karmaşıktır (hash doğrulama vb.)
+            # Burada simülasyon amaçlı direkt değiştiriyoruz.
+            conn.execute("DELETE FROM blocks")
+            conn.execute("DELETE FROM assets") # Varlıkları da eşitle / Sync assets too
+            
+            for b in remote_data['chain']:
+                conn.execute("INSERT INTO blocks (block_index, timestamp, proof, previous_hash, block_hash) VALUES (?, ?, ?, ?, ?)",
+                             (b['block_index'], b['timestamp'], b['proof'], b['previous_hash'], b['block_hash']))
+            
+            for a in remote_data['assets']:
+                content = base64.b64decode(a['content'])
+                conn.execute("INSERT INTO assets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                             (a['asset_id'], a['owner_pub_key'], a['type'], a['name'], content, a['storage_size'], a['creation_time'], a['expiry_time'], a['is_public']))
+            
+            conn.commit()
+        conn.close()
+
+# --- MESH AĞI (UDP/BLUETOOTH) / MESH NETWORK ---
+class MeshNetwork:
+    def __init__(self, db_manager):
+        self.db = db_manager
+        
+    def start_discovery(self):
+        # UDP Broadcast Başlat / Start UDP Broadcast
+        threading.Thread(target=self._broadcast_presence, daemon=True).start()
+        threading.Thread(target=self._listen_broadcast, daemon=True).start()
+
+    def _broadcast_presence(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        while self.running:
+        while True:
             try:
-                msg = f"{GHOST_BEACON_MSG.decode()}|{GHOST_PORT}|{GHOST_HOST_IP}".encode()
+                # Kendi IP'mizi bulmaya çalış / Try to find own IP
+                local_ip = socket.gethostbyname(socket.gethostname())
+                msg = f"{GHOST_BEACON_MSG.decode()}|{GHOST_PORT}|{local_ip}".encode()
                 sock.sendto(msg, ('<broadcast>', MESH_PORT))
                 time.sleep(5)
-            except Exception:
+            except:
                 time.sleep(10)
 
-    def listen_udp_broadcast(self):
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.bind(('', MESH_PORT))
-        except Exception as e:
-            logger.error(f"UDP Portu ({MESH_PORT}) bağlanamadı: {e}")
-            return
-
-        while self.running:
+    def _listen_broadcast(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(('0.0.0.0', MESH_PORT))
+        while True:
             try:
                 data, addr = sock.recvfrom(1024)
                 decoded = data.decode().split('|')
                 if decoded[0] == GHOST_BEACON_MSG.decode() and len(decoded) == 3:
                     peer_ip = decoded[2]
                     peer_port = decoded[1]
-                    if peer_ip != GHOST_HOST_IP:
-                        self.register_peer(f"http://{peer_ip}:{peer_port}", "WIFI")
-            except Exception:
+                    # Kendimizi eklemeyelim / Don't add self
+                    if "127.0.0.1" not in peer_ip: 
+                        self._add_peer(f"http://{peer_ip}:{peer_port}")
+            except:
                 pass
 
-    def start_bluetooth_server(self):
-        try:
-            server_sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
-            server_sock.bind(("", bluetooth.PORT_ANY))
-            server_sock.listen(1)
-            port = server_sock.getsockname()[1]
-            bluetooth.advertise_service(server_sock, "GhostProtocolMesh", service_id=BLUETOOTH_UUID,
-                                        service_classes=[BLUETOOTH_UUID, bluetooth.SERIAL_PORT_CLASS],
-                                        profiles=[bluetooth.SERIAL_PORT_PROFILE])
-            logger.info(f"Bluetooth dinleniyor: Kanal {port}")
-            while self.running:
-                client_sock, client_info = server_sock.accept()
-                client_sock.close() 
-        except Exception as e:
-            logger.error(f"Bluetooth Error: {e}")
-
-class UserManager:
-    def __init__(self, db):
-        self.db = db
-
-    def register(self, username, password, name, surname, phone, email):
-        if not CRYPTO_AVAILABLE:
-            return False, "Kripto kütüphanesi eksik."
-            
-        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        pem_priv = private_key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.PKCS8, encryption_algorithm=serialization.NoEncryption()).decode('utf-8')
-        pem_pub = private_key.public_key().public_bytes(encoding=serialization.Encoding.PEM, format=serialization.PublicFormat.SubjectPublicKeyInfo).decode('utf-8')
-        verification_code = str(random.randint(100000, 999999))
-        
+    def _add_peer(self, address):
         conn = self.db.get_connection()
-        try:
-            conn.execute('INSERT INTO users (username, password, name, surname, phone, email, verification_code, wallet_private_key, wallet_public_key, balance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 50)', 
-                         (username, password, name, surname, phone, email, verification_code, pem_priv, pem_pub))
-            conn.commit()
-            print(f"--- DOĞRULAMA KODU: {verification_code} ---")
-            return True, "Başarılı"
-        except sqlite3.IntegrityError:
-            return False, "Kullanıcı adı dolu"
-        except Exception as e:
-            return False, str(e)
-        finally:
-            conn.close()
-
-    def verify_user(self, username, code):
-        conn = self.db.get_connection()
-        user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        conn.execute("INSERT OR REPLACE INTO mesh_peers (ip_address, last_seen, method) VALUES (?, ?, ?)",
+                     (address, time.time(), "WIFI"))
+        conn.commit()
         conn.close()
-        if user and user['verification_code'] == code:
-            conn = self.db.get_connection()
-            conn.execute("UPDATE users SET is_verified = 1 WHERE username = ?", (username,))
-            conn.commit()
-            conn.close()
-            return True
-        return False
 
-class StorageBlockchain:
+# --- VARLIK YÖNETİMİ & ÜCRETLENDİRME / ASSET MANAGEMENT & FEES ---
+class AssetManager:
     def __init__(self, db_manager):
         self.db = db_manager
 
-    def upload_asset(self, user_pub_key, asset_type, name, content_data):
-        conn = self.db.get_connection()
-        try:
-            size = len(content_data)
-            cost = (size / (1024 * 1024)) * STORAGE_COST_PER_MB_MONTHLY
-            
-            cursor = conn.execute("SELECT balance FROM users WHERE wallet_public_key = ?", (user_pub_key,))
-            row = cursor.fetchone()
-            if not row or row[0] < cost:
-                return False, "Yetersiz Bakiye"
-
-            conn.execute("UPDATE users SET balance = balance - ? WHERE wallet_public_key = ?", (cost, user_pub_key))
-            conn.execute('INSERT INTO assets (asset_id, owner_pub_key, type, name, content, storage_size, creation_time, last_payment_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', 
-                         (str(uuid4()), user_pub_key, asset_type, name, content_data, size, time.time(), time.time()))
-            conn.commit()
-            return True, "Başarılı"
-        except Exception as e:
-            return False, str(e)
-        finally:
-            conn.close()
-            
-    def clone_asset(self, asset_id, new_owner_key):
-        conn = self.db.get_connection()
-        try:
-            original = conn.execute("SELECT * FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
-            if not original: return False, "Bulunamadı"
-        finally:
-            conn.close()
-            
-        return self.upload_asset(new_owner_key, original['type'], "Copy_" + original['name'], original['content'])
-
-# --- BAŞLATMA ---
-db = DatabaseManager(DB_FILE)
-user_mgr = UserManager(db)
-chain = StorageBlockchain(db)
-mesh = MeshManager(db)
-
-# --- WEB ARAYÜZÜ (Hata Önleyici Context Processor) ---
-# Bu kısım 500 hatalarının çoğunu çözer. Her template render işleminde
-# 'internet' ve 'peers' değişkenlerini otomatik olarak sayfaya gönderir.
-@app.context_processor
-def inject_common_variables():
-    conn = db.get_connection()
-    peers = conn.execute("SELECT * FROM mesh_peers WHERE last_seen > ?", (time.time() - 300,)).fetchall()
-    conn.close()
-    
-    internet_status = False
-    try:
-        socket.create_connection(("8.8.8.8", 53), timeout=0.5)
-        internet_status = True
-    except OSError:
-        pass
+    def register_asset(self, owner_key, asset_type, name, content_bytes):
+        # Varlık oluşturur (6 Ay süreli) / Creates asset (6 Months validity)
+        size = len(content_bytes)
+        creation_time = time.time()
+        expiry_time = creation_time + DOMAIN_EXPIRY_SECONDS
         
-    return dict(internet=internet_status, peers=peers)
+        conn = self.db.get_connection()
+        # Eğer bu isimde bir domain varsa ve süresi dolmamışsa hata ver
+        # If domain exists and not expired, raise error
+        existing = conn.execute("SELECT expiry_time FROM assets WHERE name = ? AND type = 'domain'", (name,)).fetchone()
+        if existing and existing['expiry_time'] > time.time():
+            conn.close()
+            return False, "Domain alınmış ve süresi dolmamış. / Domain taken and not expired."
 
+        conn.execute("INSERT OR REPLACE INTO assets (asset_id, owner_pub_key, type, name, content, storage_size, creation_time, expiry_time, is_public) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (str(uuid4()), owner_key, asset_type, name, content_bytes, size, creation_time, expiry_time, 1))
+        conn.commit()
+        conn.close()
+        return True, "Başarılı / Success"
+
+    def clone_asset(self, asset_id, new_owner_key):
+        # İçeriği kopyalar (Forking) / Clones content (Forking)
+        conn = self.db.get_connection()
+        original = conn.execute("SELECT * FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
+        
+        if not original:
+            conn.close()
+            return False, "Varlık bulunamadı. / Asset not found."
+            
+        # Orijinal içeriği al, yeni bir kayıt oluştur. Yeni sahibi 'new_owner_key' olur.
+        # Böylece orijinal silinse bile bu kopya yaşar.
+        # Get original content, create new record. New owner is 'new_owner_key'.
+        # Copy survives even if original is deleted.
+        
+        new_name = original['name'] if original['type'] != 'domain' else f"copy_{original['name']}"
+        new_expiry = time.time() + DOMAIN_EXPIRY_SECONDS
+        
+        conn.execute("INSERT INTO assets (asset_id, owner_pub_key, type, name, content, storage_size, creation_time, expiry_time, is_public) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     (str(uuid4()), new_owner_key, original['type'], new_name, original['content'], original['storage_size'], time.time(), new_expiry, 1))
+        conn.commit()
+        conn.close()
+        return True, "Klonlandı / Cloned"
+
+    def delete_asset(self, asset_id, owner_key):
+        # Varlığı siler (Ücret ödemeyi durdurur) / Deletes asset (Stops fee payment)
+        conn = self.db.get_connection()
+        conn.execute("DELETE FROM assets WHERE asset_id = ? AND owner_pub_key = ?", (asset_id, owner_key))
+        conn.commit()
+        conn.close()
+        return True
+
+# --- UYGULAMA BAŞLATMA / APP INIT ---
+db = DatabaseManager(DB_FILE)
+sync = SyncManager(db)
+mesh = MeshNetwork(db)
+assets_mgr = AssetManager(db)
+
+# Arka plan servislerini başlat / Start background services
+sync.start_background_sync()
+mesh.start_discovery()
+
+# --- WEB ROTALARI / WEB ROUTES ---
+
+# Global Template Değişkenleri
+@app.context_processor
+def inject_globals():
+    try:
+        conn = db.get_connection()
+        peers = conn.execute("SELECT * FROM mesh_peers").fetchall()
+        conn.close()
+        # Basit internet kontrolü
+        socket.create_connection(("8.8.8.8", 53), timeout=0.1)
+        internet = True
+    except:
+        internet = False
+        peers = []
+    return dict(internet=internet, peers=peers)
+
+# LAYOUT ve HTML Şablonları (Jinja2 hatalarına karşı temiz string)
 LAYOUT = """
 <!doctype html>
-<html lang="tr">
+<html>
 <head>
-    <title>GhostProtocol Node</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ghost Mesh Node</title>
     <style>
         body { font-family: sans-serif; background: #222; color: #eee; padding: 20px; }
-        .card { background: #333; padding: 15px; margin-bottom: 15px; border: 1px solid #444; border-radius: 5px; }
-        a { color: #4dabf7; }
-        input, button, select { width: 100%; padding: 10px; margin: 5px 0; }
-        .online { color: #28a745; font-weight:bold; } .offline { color: #dc3545; font-weight:bold; }
+        .card { background: #333; padding: 15px; margin-bottom: 10px; border-radius: 5px; border: 1px solid #444; }
+        .success { color: #4caf50; } .fail { color: #f44336; }
+        a { color: #2196f3; text-decoration: none; }
+        input, button { padding: 8px; margin: 5px 0; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border-bottom: 1px solid #555; padding: 8px; text-align: left; }
     </style>
 </head>
 <body>
-    <h1>👻 GhostProtocol ({{ request.host }})</h1>
+    <h2>👻 GhostProtocol Mesh Node</h2>
     <div class="card">
-        <p>Internet: <span class="{{ 'online' if internet else 'offline' }}">{{ 'ONLINE' if internet else 'OFFLINE' }}</span> | Peers: {{ peers|length }}</p>
+        Durum: <span class="{{ 'success' if internet else 'fail' }}">{{ 'ONLINE (Cloud Sync)' if internet else 'OFFLINE (Mesh Only)' }}</span>
+        | Peers: {{ peers|length }}
+        <br>
         {% if session.get('username') %}
-            User: <b>{{ session['username'] }}</b> | Balance: {{ session.get('balance', 0)|round(4) }}
-            <br><a href="/dashboard">Dashboard</a> | <a href="/logout">Logout</a>
+            Kullanıcı: <b>{{ session['username'] }}</b> | <a href="/dashboard">Panel</a> | <a href="/logout">Çıkış</a>
         {% else %}
-            <a href="/login">Login</a> | <a href="/register">Register</a>
+            <a href="/login">Giriş</a> | <a href="/register">Kayıt</a>
         {% endif %}
     </div>
-    <div class="card">{% block content %}{% endblock %}</div>
+    {% block content %}{% endblock %}
 </body>
 </html>
 """
 
 @app.route('/')
 def home():
-    try:
+    # Ana Sayfa ve Arama / Home and Search
+    return render_template_string(LAYOUT + """
+    {% block content %}
+    <div class="card">
+        <h3>🔍 Ghost Arama / Search</h3>
+        <form action="/search" method="get">
+            <input name="q" placeholder="Domain (.ghost) veya İçerik..." style="width: 70%;">
+            <button>Ara</button>
+        </form>
+    </div>
+    {% endblock %}
+    """)
+
+@app.route('/search')
+def search():
+    query = request.args.get('q', '')
+    results = []
+    if query:
         conn = db.get_connection()
-        assets = conn.execute("SELECT * FROM assets WHERE status = 'active' ORDER BY creation_time DESC LIMIT 10").fetchall()
+        # Sadece süresi dolmamış domainleri ve içerikleri getir / Get only non-expired domains and content
+        # expiry_time kontrolü burada yapılıyor
+        now = time.time()
+        results = conn.execute("SELECT * FROM assets WHERE name LIKE ? AND expiry_time > ?", (f'%{query}%', now)).fetchall()
         conn.close()
-        return render_template_string(LAYOUT + """
-        {% block content %}
-            <h3>Son İçerikler</h3>
-            {% for asset in assets %}
-                <div style="border-bottom:1px solid #555; padding:5px;">
-                    <b>{{ asset['name'] }}</b> ({{ asset['type'] }})
-                    {% if session.get('username') %}
-                        <form action="/clone_asset" method="post" style="display:inline;">
-                            <input type="hidden" name="asset_id" value="{{ asset['asset_id'] }}">
-                            <button type="submit" style="width:auto; padding:5px;">Kopyala</button>
-                        </form>
-                    {% endif %}
-                </div>
-            {% endfor %}
-        {% endblock %}
-        """, assets=assets)
-    except Exception as e:
-        return f"<h3>Sunucu Hatası (Home): {e}</h3>"
+    
+    return render_template_string(LAYOUT + """
+    {% block content %}
+    <h3>Sonuçlar / Results: {{ query }}</h3>
+    {% for r in results %}
+        <div class="card">
+            <b>{{ r['name'] }}</b> ({{ r['type'] }})
+            <br>Boyut: {{ (r['storage_size']/1024)|round(1) }} KB
+            <br><a href="/view/{{ r['asset_id'] }}" target="_blank">Görüntüle / View</a>
+            {% if session.get('username') %}
+            | <form action="/clone" method="post" style="display:inline"><input type="hidden" name="id" value="{{ r['asset_id'] }}"><button>Kopyala / Clone</button></form>
+            {% endif %}
+        </div>
+    {% endfor %}
+    {% endblock %}
+    """, results=results, query=query)
 
-@app.route('/register', methods=['GET', 'POST'])
-def register():
+@app.route('/view/<asset_id>')
+def view_asset(asset_id):
+    conn = db.get_connection()
+    asset = conn.execute("SELECT * FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
+    conn.close()
+    
+    if not asset: return "Bulunamadı / Not Found", 404
+    
+    # Süre kontrolü (Süresi dolmuşsa görüntüleme) / Expiry check
+    if asset['expiry_time'] < time.time() and asset['type'] == 'domain':
+        return "<h1>Domain Süresi Doldu / Domain Expired</h1><p>Bu içerik artık yayında değil.</p>", 403
+
+    content = asset['content'] # BLOB
+    
+    if asset['type'] == 'domain':
+        return content.decode('utf-8')
+    else:
+        return Response(content, mimetype="application/octet-stream")
+
+@app.route('/dashboard', methods=['GET', 'POST'])
+def dashboard():
+    if not session.get('username'): return redirect('/login')
+    
+    msg = ""
+    # POST İşlemleri (Domain Kayıt, Silme, vb.)
     if request.method == 'POST':
-        success, msg = user_mgr.register(request.form['username'], request.form['password'], request.form['name'], request.form['surname'], request.form['phone'], request.form['email'])
-        if success:
-            session['temp_username'] = request.form['username']
-            return redirect(url_for('verify'))
-        return f"Hata: {msg}"
-    return render_template_string(LAYOUT + "{% block content %}<h3>Kayıt Ol</h3><form method='post'><input name='username' placeholder='Kullanıcı Adı'><input name='password' type='password' placeholder='Şifre'><input name='name' placeholder='Ad'><input name='surname' placeholder='Soyad'><input name='phone' placeholder='Tel'><input name='email' placeholder='Email'><button>Kaydol</button></form>{% endblock %}")
+        action = request.form.get('action')
+        if action == 'register_domain':
+            name = request.form['name']
+            data = request.form['data']
+            success, msg = assets_mgr.register_asset(session['pub_key'], 'domain', name, data.encode('utf-8'))
+        elif action == 'delete_asset':
+            assets_mgr.delete_asset(request.form['id'], session['pub_key'])
+            msg = "Varlık silindi / Asset deleted"
 
-@app.route('/verify', methods=['GET', 'POST'])
-def verify():
-    if request.method == 'POST':
-        if user_mgr.verify_user(session.get('temp_username', ''), request.form['code']):
-            return redirect(url_for('login'))
-        return "Hatalı Kod"
-    return render_template_string(LAYOUT + "{% block content %}<h3>Doğrulama</h3><p>Terminaldeki kodu girin</p><form method='post'><input name='code' placeholder='Kod'><button>Doğrula</button></form>{% endblock %}")
+    # Verileri Çek
+    conn = db.get_connection()
+    my_assets = conn.execute("SELECT * FROM assets WHERE owner_pub_key = ?", (session['pub_key'],)).fetchall()
+    conn.close()
+    
+    # Varlık Listesi HTML'ini oluştur (Jinja2 hatasını önlemek için string birleştirme)
+    assets_html = ""
+    now = time.time()
+    
+    for a in my_assets:
+        days_left = int((a['expiry_time'] - now) / 86400)
+        status = "AKTİF" if days_left > 0 else "SÜRESİ DOLDU (Özel)"
+        fee = round(a['storage_size'] / 1024 / 1024 * STORAGE_COST_PER_MB, 6)
+        
+        assets_html += f"""
+        <tr>
+            <td>{a['name']}</td>
+            <td>{a['type']}</td>
+            <td>{days_left} Gün</td>
+            <td>{fee} GHOST/Ay</td>
+            <td>{status}</td>
+            <td>
+                <form method="post" style="display:inline">
+                    <input type="hidden" name="action" value="delete_asset">
+                    <input type="hidden" name="id" value="{a['asset_id']}">
+                    <button style="background:#f44336; color:white">Sil</button>
+                </form>
+            </td>
+        </tr>
+        """
 
+    return render_template_string(LAYOUT + f"""
+    {{% block content %}}
+    <p style="color:red">{msg}</p>
+    
+    <div class="card">
+        <h3>Yeni Domain Tescil (.ghost) - 6 Ay</h3>
+        <form method="post">
+            <input type="hidden" name="action" value="register_domain">
+            <input name="name" placeholder="site.ghost" required>
+            <br>
+            <textarea name="data" rows="5" style="width:100%" placeholder="HTML İçeriği..."></textarea>
+            <br><button>Tescil Et ve Yayınla</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h3>Varlıklarım & Alan Adlarım</h3>
+        <table>
+            <tr>
+                <th>Ad</th>
+                <th>Tip</th>
+                <th>Kalan Süre</th>
+                <th>Ücret</th>
+                <th>Durum</th>
+                <th>İşlem</th>
+            </tr>
+            {assets_html}
+        </table>
+    </div>
+    {{% endblock %}}
+    """)
+
+@app.route('/clone', methods=['POST'])
+def clone():
+    if not session.get('username'): return redirect('/login')
+    assets_mgr.clone_asset(request.form['id'], session['pub_key'])
+    return redirect('/dashboard')
+
+# --- AUTH (Basitleştirilmiş) ---
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         conn = db.get_connection()
-        user = conn.execute("SELECT * FROM users WHERE username = ? AND password = ?", (request.form['username'], request.form['password'])).fetchone()
+        # Demo: Şifre kontrolü yapmadan varsa girer, yoksa oluşturur (Basitlik için)
+        user = conn.execute("SELECT * FROM users WHERE username = ?", (request.form['username'],)).fetchone()
+        if not user:
+            pub_key = str(uuid4()) # Demo anahtar
+            conn.execute("INSERT INTO users (username, wallet_public_key) VALUES (?, ?)", (request.form['username'], pub_key))
+            conn.commit()
+            user = {'username': request.form['username'], 'wallet_public_key': pub_key}
         conn.close()
-        if user:
-            if user['is_verified'] == 0:
-                session['temp_username'] = user['username']
-                return redirect(url_for('verify'))
-            session['username'] = user['username']
-            session['pub_key'] = user['wallet_public_key']
-            session['balance'] = user['balance']
-            return redirect(url_for('dashboard'))
-        return "Giriş Başarısız"
-    return render_template_string(LAYOUT + "{% block content %}<h3>Giriş</h3><form method='post'><input name='username' placeholder='Kullanıcı Adı'><input name='password' type='password' placeholder='Şifre'><button>Giriş</button></form>{% endblock %}")
-
-@app.route('/dashboard')
-def dashboard():
-    if not session.get('username'): return redirect('/login')
-    conn = db.get_connection()
-    assets = conn.execute("SELECT * FROM assets WHERE owner_pub_key = ?", (session['pub_key'],)).fetchall()
-    conn.close()
-    return render_template_string(LAYOUT + """
-    {% block content %}
-        <h3>Panelim</h3>
-        <form action="/upload" method="post" enctype="multipart/form-data">
-            <input type="file" name="file" required>
-            <select name="type"><option value="image">Resim</option><option value="video">Video</option></select>
-            <button>Yükle</button>
-        </form>
-        <h4>Dosyalarım</h4>
-        <ul>{% for a in assets %}<li>{{ a['name'] }}</li>{% endfor %}</ul>
-    {% endblock %}
-    """, assets=assets)
-
-@app.route('/upload', methods=['POST'])
-def upload():
-    if not session.get('username'): return redirect('/login')
-    file = request.files['file']
-    if file:
-        data = base64.b64encode(file.read()).decode('utf-8')
-        mime = "image/png" if request.form['type'] == 'image' else "video/mp4"
-        content = f"data:{mime};base64,{data}"
-        chain.upload_asset(session['pub_key'], request.form['type'], secure_filename(file.filename), content)
-    return redirect(url_for('dashboard'))
-
-@app.route('/clone_asset', methods=['POST'])
-def clone_asset():
-    if not session.get('username'): return redirect('/login')
-    chain.clone_asset(request.form['asset_id'], session['pub_key'])
-    return redirect(url_for('dashboard'))
+        session['username'] = user['username']
+        session['pub_key'] = user['wallet_public_key']
+        return redirect('/dashboard')
+    return render_template_string(LAYOUT + """{% block content %}<form method='post'>Kullanıcı Adı: <input name='username'><button>Giriş</button></form>{% endblock %}""")
 
 @app.route('/logout')
 def logout():
     session.clear()
     return redirect('/')
 
+@app.route('/chain', methods=['GET'])
+def chain_export():
+    # Diğer mesh node'lar bizden veri çekerken burayı kullanır
+    return jsonify(json.loads('{"chain": [], "length": 0}')) # Demo placeholder
+
 if __name__ == '__main__':
-    print("--- GHOST NODE BAŞLATILIYOR (SAFE MODE) ---")
-    mesh.start()
-    print(f"Erişim: http://{GHOST_HOST_IP}:{GHOST_PORT}")
-    # debug=True hatanın tarayıcıda görünmesini sağlar
+    print(f"--- GHOST MESH NODE ({GHOST_PORT}) ---")
     app.run(host='0.0.0.0', port=GHOST_PORT, debug=True, use_reloader=False)
