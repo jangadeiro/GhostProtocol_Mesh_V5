@@ -16,8 +16,8 @@
 
 ---
 
-<a name="-english"></a>
-## 🇬🇧 English
+<a name="-english">
+## 🇬🇧 English</a>
 
 ### Overview
 GhostProtocol is a Proof-of-Work (PoW) blockchain designed to function as a survivalist communication network. It enables a decentralized web (`.ghost` domains) and acts as a hybrid mesh network. It operates seamlessly whether connected to the high-speed internet (Cloud Mode) or completely offline using local connections (Mesh Mode).
@@ -77,9 +77,9 @@ Access: http://YOUR_SERVER_IP:5000
 
 Features: High-availability block storage, centralized sync point.
 
-<a name="-türkçe"></a>
+<a name="-türkçe">
 
-🇹🇷 Türkçe
+🇹🇷 Türkçe</a>
 Proje Özeti
 GhostProtocol, internet bağlantısı olmasa dahi çalışabilmek üzere tasarlanmış, Proof-of-Work (PoW) tabanlı bir blok zinciridir. Merkeziyetsiz web sitelerine (.ghost alan adları) ev sahipliği yapar. İnternet varken bulut sunucularla, yokken ise yerel cihazlarla haberleşen hibrit bir yapıya sahiptir.
 
