@@ -12,7 +12,7 @@
 ## 🌍 Language Selection / Dil Seçimi
 
 - [🇬🇧 **English**](#-english)
-- [🇹🇷 **Türkçe**](#-türkçe)
+- [🇹🇷 **Türkçe**](#-turkish)
 
 ---
 
@@ -77,9 +77,9 @@ Access: http://YOUR_SERVER_IP:5000
 
 Features: High-availability block storage, centralized sync point.
 
-<a name="-türkçe">
-
+<a name="-turkish">
 🇹🇷 Türkçe</a>
+
 Proje Özeti
 GhostProtocol, internet bağlantısı olmasa dahi çalışabilmek üzere tasarlanmış, Proof-of-Work (PoW) tabanlı bir blok zinciridir. Merkeziyetsiz web sitelerine (.ghost alan adları) ev sahipliği yapar. İnternet varken bulut sunucularla, yokken ise yerel cihazlarla haberleşen hibrit bir yapıya sahiptir.
 
