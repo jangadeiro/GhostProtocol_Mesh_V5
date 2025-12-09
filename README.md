@@ -141,5 +141,48 @@ Erişim: http://SUNUCU_IP_ADRESINIZ:5000
 
 Özellikler: Yüksek erişilebilirlik, Ana blok deposu.
 
+🇹🇷 Önemli Değişiklikler ve Güncellemeler (Key Changes and Updates)
+Bu bölüm, GhostProtocol ağının merkeziyetsizliğini ve işlevselliğini önemli ölçüde artıran son güncellemeleri içerir.
+
+🔥 Varlık Sunumu ve Merkeziyetsizlik İyileştirmeleri (Asset Serving & Decentralization Enhancements)
+1. ghost_server.py Güncellemeleri
+Merkeziyetsiz Linkleme: Görüntüleme linkleri artık sunucu adresini içermeyen göreceli URL'ler kullanır. Örneğin, <a href="/view_asset/<asset_id>"> formatı kullanılır. Bu, ağdaki Ghost Mesh Node (GMN) tarafından alıntılamayı destekler.
+
+Kopyalama Linkleri: Kullanıcıların kopyaladığı linkler, kullanım kolaylığı için mutlak URL (http://ip:port/view_asset/<asset_id>) olarak kalmaya devam eder.
+
+2. ghost_mesh_node.py Yeniden Yapılandırması
+Rol Değişimi: Kod, sunucu (Backbone) rolünden çıkarılıp, saf bir Ağ Düğümü (Mesh Node) olarak yeniden yapılandırıldı.
+
+Merkeziyetsiz Servis Eklendi: Yeni /view_asset/<asset_id> rotası eklendi. Bu sayede düğüm, merkezi sunucudan bağımsız olarak, zincirden eşlediği varlıkları (medya, domain içeriği) kendi yerel veritabanından doğrudan sunabilir. Bu, içerik dağıtımını tamamen merkeziyetsiz hale getirir.
+
+Veritabanı Sadeleştirmesi: Düğümün yalnızca blokları ve varlıkları saklaması için veritabanı şeması sadeleştirildi. Kullanıcı, cüzdan ve işlem tabloları kaldırıldı.
+
+Çoklu Dil Desteği: Kullanıcı arayüzüne Türkçe ve İngilizce dil destekleri eklendi.
+
+3. Genel Etki
+Bu değişiklikler, Ghost Mesh Node (GMN) kullanıcılarının, GhostProtocol'e içerik yükleyen kişilerin paylaştığı medyaları veya domainleri, merkezi bir sunucuya gitmeden, doğrudan zincir referansı (Asset ID) üzerinden alıntılayabilmesini sağlar.
+
+🇬🇧 Key Changes and Updates
+This section details the latest updates that significantly enhance the decentralization and functionality of the GhostProtocol network.
+
+🔥 Asset Serving & Decentralization Enhancements
+1. ghost_server.py Updates
+Decentralized Linking: Viewing links now use relative URLs that do not include the server address. For example, the format <a href="/view_asset/<asset_id>"> is used. This supports referencing by the Ghost Mesh Node (GMN) across the network.
+
+Copy Links: Links copied by users remain absolute URLs (http://ip:port/view_asset/<asset_id>) for ease of use.
+
+2. ghost_mesh_node.py Refactoring
+Role Change: The code was refactored from a Backbone Server role to act as a purely Network Node (Mesh Node).
+
+Decentralized Service Added: A new /view_asset/<asset_id> route was implemented. This allows the node to serve assets (media, domain content) synchronized from the chain directly from its local database, independent of the central server. This fully decentralizes content distribution.
+
+Database Simplification: The database schema was streamlined to only store blocks and assets. Tables for users, wallets, and transactions were removed.
+
+Multi-Language Support: Turkish and English language support was added to the user interface.
+
+3. Overall Impact
+These changes enable Ghost Mesh Node (GMN) users to reference media or domains shared by GhostProtocol content creators directly via the chain reference (Asset ID), without needing to route through a centralized server.
+
+
 ⚠️ Disclaimer / Yasal Uyarı
 GhostProtocol is an experimental software designed for educational and research purposes. Use at your own risk. (GhostProtocol eğitim ve araştırma amaçlı tasarlanmış deneysel bir yazılımdır. Kullanım riski size aittir.)
