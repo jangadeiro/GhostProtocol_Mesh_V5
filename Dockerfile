@@ -1,30 +1,23 @@
-# Temel İmaj: Debian tabanlı Slim sürüm (Alpine, PyBluez için sorun çıkarabilir)
-FROM python:3.9-slim
+# GhostProtocol için temel Dockerfile
+FROM python:3.10-slim
 
-# Çalışma dizini
+# Uygulamanın çalışacağı dizini ayarla
 WORKDIR /app
 
-# Sistem bağımlılıklarını yükle (Bluetooth ve Derleme araçları için)
-RUN apt-get update && apt-get install -y \
-    gcc \
-    python3-dev \
-    libbluetooth-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Python kütüphanelerini yükle
+# Gerekli paketleri yükle (requirements.txt dosyası var sayılır)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Uygulama kodunu kopyala
+# Hem server hem de mesh node dosyalarını kopyalamalıyız
+COPY ghost_server.py .
 COPY ghost_mesh_node.py .
+COPY templates/ /app/templates/ # Eğer ayrı bir şablon dizini varsa
 
-# Veri klasörü oluştur
-RUN mkdir -p /app/data
+# Veritabanını kalıcı hale getirmek için /app dizini kalıcı bir birime (volume) bağlanmalıdır.
+# Uygulama, Gunicorn ile başlatılacak
+# Varsayılan CMD'yi aşağıda docker-compose'da belirteceğiz
 
-# Portları aç (5000: Web/API, 9999: UDP Mesh Discovery)
+# Server varsayılan portu 5000, Node varsayılan portu 5001'dir (docker-compose'da tanımlanmıştır)
 EXPOSE 5000
-EXPOSE 9999/udp
-
-# Uygulamayı başlat
-# Not: -u parametresi logların anlık olarak terminale düşmesini sağlar
-ENTRYPOINT ["python", "-u", "ghost_mesh_node.py"]
+EXPOSE 5001
