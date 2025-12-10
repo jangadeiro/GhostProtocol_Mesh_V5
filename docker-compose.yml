@@ -1,34 +1,69 @@
 version: '3.8'
 
 services:
-  ghost-node:
+  # --- 1. Backbone Server Servisi ---
+  ghost_server:
     build: .
-    container_name: ghost_mesh_node
-    restart: unless-stopped
-    # Bluetooth ve UDP Broadcast'in sağlıklı çalışması için
-    # Host ağını kullanmak en iyisidir (Linux sunucularda önerilir).
-    # Mac/Windows'ta 'network_mode: host' çalışmaz, port mapping kullanılır.
-    # network_mode: host 
-    ports:
-      - "5000:5000"
-      - "9999:9999/udp"
-    volumes:
-      # Verilerin kalıcı olması için
-      - ./ghost_v5.db:/app/ghost_v5.db
-    privileged: true  # Bluetooth donanımına erişim için gerekebilir
-    cap_add:
-      - NET_ADMIN     # Ağ keşfi için gerekli yetkiler
+    # Gunicorn ile ghost_server.py uygulamasını 5000 portunda başlatır
+    command: gunicorn --bind 0.0.0.0:5000 ghost_server:app
     environment:
-      - FLASK_ENV=production
-
-  # (Opsiyonel) Gateway Sunucusu
-  nginx:
-    image: nginx:alpine
-    container_name: ghost_gateway
-    restart: always
+      # Eğer sunucu IP'si kompozisyon dışındaysa bu ortam değişkeni kullanılabilir
+      # Ancak KNOWN_PEERS genellikle kod içinde tutulur
+      FLASK_ENV: production
     ports:
-      - "80:80"
+      # Sadece test veya doğrudan erişim için: "5000:5000"
+      # Nginx'in erişmesi yeterlidir
+      - "5000:5000"
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      # Veritabanı ve kalıcı veriler için birim
+      - ghost_server_data:/app
+    networks:
+      - ghost_net
+    restart: always
+
+  # --- 2. Ghost Mesh Node Servisi ---
+  ghost_node:
+    build: .
+    # Gunicorn ile ghost_mesh_node.py uygulamasını 5001 portunda başlatır
+    command: gunicorn --bind 0.0.0.0:5001 ghost_mesh_node:app
+    environment:
+      FLASK_ENV: production
+    ports:
+      # Sadece test veya doğrudan erişim için: "5001:5001"
+      - "5001:5001"
+    volumes:
+      # Veritabanı ve kalıcı veriler için ikinci bir birim
+      - ghost_node_data:/app
+    networks:
+      - ghost_net
+    restart: always
+    # Mesh Node'un Server'dan sonra başlamasını sağlar
     depends_on:
-      - ghost-node
+      - ghost_server
+      
+  # --- 3. Nginx Proxy Servisi ---
+  nginx:
+    image: nginx:latest
+    container_name: ghost_nginx
+    volumes:
+      # Nginx konfigürasyon dosyasını bağla
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      # Tüm gelen trafik 80 portundan Nginx'e yönlendirilir
+      - "80:80"
+    networks:
+      - ghost_net
+    depends_on:
+      - ghost_server
+      - ghost_node
+    restart: always
+
+# --- Kalıcı Veri Birimleri (Volumes) ---
+volumes:
+  ghost_server_data:
+  ghost_node_data:
+
+# --- Ağ Tanımı ---
+networks:
+  ghost_net:
+    driver: bridge
