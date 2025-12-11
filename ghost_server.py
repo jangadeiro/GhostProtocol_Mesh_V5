@@ -23,28 +23,27 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - GhostServer - %(le
 logger = logging.getLogger("GhostCloud")
 
 # --- YAPILANDIRMA / CONFIGURATION ---
-# TR: Ağ zorluk seviyesi (Hash'te bulunması gereken 0 sayısı)
-# EN: Network difficulty level (Number of leading zeros required in the hash)
-MINING_DIFFICULTY = 4
-# TR: Başarılı madencilik için blok ödülü
-# EN: Block reward for successful mining
-BLOCK_REWARD = 10
+# TR: Ağ başlangıç zorluk seviyesi
+# EN: Network base difficulty level
+BASE_DIFFICULTY = 4 
+
+# TR: Başlangıç blok ödülü (50 GHOST)
+# EN: Initial block reward (50 GHOST)
+INITIAL_BLOCK_REWARD = 50
+
+# TR: Ödül yarılanma aralığı (Blok sayısı)
+# EN: Reward halving interval (Number of blocks)
+HALVING_INTERVAL = 2000
+
 DB_FILE = os.path.join(os.getcwd(), "ghost_cloud_v2.db") 
 GHOST_PORT = 5000
 DOMAIN_EXPIRY_SECONDS = 15552000  # 6 Ay / 6 Months
+STORAGE_COST_PER_MB = 0.01        # MB başına 0.01 GHOST
+DOMAIN_REGISTRATION_FEE = 1.0     # Sabit 1.0 GHOST
 
-# TR: Varlık Ücretleri (YENİ GÜNCELLEMELER)
-# EN: Asset Fees (NEW UPDATES)
-STORAGE_COST_PER_MB = 0.01       # TR: Veri barındırma ücreti: MB başı 0.01 GHOST
-DOMAIN_REGISTRATION_FEE = 1.0    # TR: 6 Aylık Domain Tescil Ücreti: 1.0 GHOST
-
-# TR: Ağdaki diğer düğümler (Peer) listesi.
-# EN: List of other peers in the network.
 KNOWN_PEERS = []
 
 app = Flask(__name__)
-# TR: Flask oturumları için gizli anahtar
-# EN: Secret key for Flask sessions
 app.secret_key = 'cloud_super_secret_permanency_fix_2024_03_12_FINAL' 
 app.permanent_session_lifetime = timedelta(days=7) 
 app.config['SESSION_COOKIE_SECURE'] = False 
@@ -57,38 +56,73 @@ LANGUAGES = {
         'server_status': "Sunucu Durumu", 'active_peers': "Aktif Peer",
         'dashboard_title': "Panel", 'mining_title': "Madencilik", 'logout': "Çıkış", 'login': "Giriş", 'register': "Kayıt", 'search': "Arama",
         'wallet_title': "💳 Cüzdanım", 'pubkey': "Genel Anahtar", 'balance': "Bakiye",
-        'domain_title': "💾 .ghost Kayıt (Ücret: 1.0 GHOST / 6 Ay)", 'media_title': "🖼️ Varlık Yükle", 'asset_action': "İşlem", 
-        'status_success': "Başarılı", 'status_failed': "Başarısız", 'mine_last_block': "Son Blok", 
+        'domain_title': "💾 .ghost Kayıt", 'media_title': "🖼️ Varlık Yükle", 'asset_action': "İşlem", 
+        'status_success': "Başarılı", 'status_failed': "Başarısız", 
         'monthly_fee_unit': " GHOST", 'media_link_copy': "Kopyalandı!",
         'media_info': "Desteklenen: .png, .jpg, .css, .js, .woff, .mp4, .mp3", 'register_btn': "Yayınla", 
         'search_title': "🔍 Ghost Arama (İçerik & Domain)", 'edit': "Düzenle", 'delete': "Sil",
         'login_prompt': "Giriş Yap", 'username': "Kullanıcı Adı", 'password': "Şifre", 'submit': "Gönder",
         'asset_fee': "Ücret", 'asset_expires': "Süre Sonu", 'mine_success': "Blok Başarılı", 
-        'mine_message': "Yeni blok bulundu: {{ block_hash }}. Ödül: {{ reward }} GHOST hesabınıza eklendi."
+        'mine_message': "Yeni blok bulundu: {{ block_hash }}. Ödül: {{ reward }} GHOST hesabınıza eklendi.",
+        'mine_last_block': "Son Blok", 'mine_difficulty': "Zorluk", 'mine_reward': "Mevcut Ödül",
+        'mine_next_halving': "Sonraki Yarılanma", 'mine_limit_error': "Günde sadece 1 kez madencilik yapabilirsiniz. Kalan süre:",
+        'mine_start_btn': "Madenciliği Başlat"
     },
     'en': {
         'title': "GhostProtocol Server", 'status_online': "ONLINE", 'status_offline': "OFFLINE",
         'server_status': "Server Status", 'active_peers': "Active Peers",
         'dashboard_title': "Dashboard", 'mining_title': "Mining", 'logout': "Logout", 'login': "Login", 'register': "Register", 'search': "Search",
         'wallet_title': "💳 My Wallet", 'pubkey': "Public Key", 'balance': "Balance",
-        'domain_title': "💾 .ghost Registration (Fee: 1.0 GHOST / 6 Months)", 'media_title': "🖼️ Upload Asset", 'asset_action': "Action", 
-        'status_success': "Success", 'status_failed': "Failed", 'mine_last_block': "Last Block", 
+        'domain_title': "💾 .ghost Registration", 'media_title': "🖼️ Upload Asset", 'asset_action': "Action", 
+        'status_success': "Success", 'status_failed': "Failed", 
         'monthly_fee_unit': " GHOST", 'media_link_copy': "Copied!",
         'media_info': "Supported: .png, .jpg, .css, .js, .woff, .mp4, .mp3", 'register_btn': "Publish", 
         'search_title': "🔍 Ghost Search (Content & Domain)", 'edit': "Edit", 'delete': "Delete",
         'login_prompt': "Login", 'username': "Username", 'password': "Password", 'submit': "Submit",
         'asset_fee': "Fee", 'asset_expires': "Expires", 'mine_success': "Block Success",
-        'mine_message': "New block found: {{ block_hash }}. Reward: {{ reward }} GHOST added to your account."
+        'mine_message': "New block found: {{ block_hash }}. Reward: {{ reward }} GHOST added to your account.",
+        'mine_last_block': "Last Block", 'mine_difficulty': "Difficulty", 'mine_reward': "Current Reward",
+        'mine_next_halving': "Next Halving", 'mine_limit_error': "You can only mine once per day. Time remaining:",
+        'mine_start_btn': "Start Mining"
     },
-    # Diğer diller kısaltıldı, gerektiğinde genişletilebilir.
+    'ru': {
+        'title': "Сервер GhostProtocol", 'status_online': "ОНЛАЙН", 'status_offline': "ОФФЛАЙН",
+        'server_status': "Статус Сервера", 'active_peers': "Активные Пиры",
+        'dashboard_title': "Панель", 'mining_title': "Майнинг", 'logout': "Выход", 'login': "Вход", 'register': "Регистрация", 'search': "Поиск",
+        'wallet_title': "💳 Мой Кошелек", 'pubkey': "Публичный Ключ", 'balance': "Баланс",
+        'domain_title': "💾 Регистрация .ghost", 'media_title': "🖼️ Загрузить Актив", 'asset_action': "Действие", 
+        'status_success': "Успех", 'status_failed': "Ошибка", 
+        'monthly_fee_unit': " GHOST", 'media_link_copy': "Скопировано!",
+        'media_info': "Поддерживается: .png, .jpg, .css, .js, .woff, .mp4, .mp3", 'register_btn': "Опубликовать", 
+        'search_title': "🔍 Ghost Поиск (Контент и Домен)", 'edit': "Редактировать", 'delete': "Удалить",
+        'login_prompt': "Войти", 'username': "Имя пользователя", 'password': "Пароль", 'submit': "Отправить",
+        'asset_fee': "Плата", 'asset_expires': "Срок", 'mine_success': "Блок Успешен", 
+        'mine_message': "Найден новый блок: {{ block_hash }}. Награда: {{ reward }} GHOST добавлена на ваш счет.",
+        'mine_last_block': "Последний Блок", 'mine_difficulty': "Сложность", 'mine_reward': "Текущая Награда",
+        'mine_next_halving': "Следующее Уполовинивание", 'mine_limit_error': "Вы можете майнить только один раз в день. Оставшееся время:",
+        'mine_start_btn': "Начать Майнинг"
+    },
+    'hy': {
+        'title': "GhostProtocol Սերվեր", 'status_online': "ԱՌՑԱՆՑ", 'status_offline': "ԱՆՑԱՆՑ",
+        'server_status': "Սերվերի Կարգավիճակը", 'active_peers': "Ակտիվ Փիրեր",
+        'dashboard_title': "Վահանակ", 'mining_title': "Մայնինգ", 'logout': "Ելք", 'login': "Մուտք", 'register': "Գրանցվել", 'search': "Որոնում",
+        'wallet_title': "💳 Իմ Դրամապանակը", 'pubkey': "Հանրային Բանալի", 'balance': "Մնացորդ",
+        'domain_title': "💾 .ghost Գրանցում", 'media_title': "🖼️ Բեռնել Ակտիվ", 'asset_action': "Գործողություն", 
+        'status_success': "Հաջող", 'status_failed': "Ձախողված", 
+        'monthly_fee_unit': " GHOST", 'media_link_copy': "Պատճենվեց!",
+        'media_info': "Աջակցվում է՝ .png, .jpg, .css, .js, .woff, .mp4, .mp3", 'register_btn': "Հրատարակել", 
+        'search_title': "🔍 Ghost Որոնում (Բովանդակություն և Դոմեն)", 'edit': "Խմբագրել", 'delete': "Ջնջել",
+        'login_prompt': "Մուտք գործել", 'username': "Օգտվողի անուն", 'password': "Գաղտնաբառ", 'submit': "Ուղարկել",
+        'asset_fee': "Վճար", 'asset_expires': "Ժամկետը", 'mine_success': "Բլոկի Հաջողություն",
+        'mine_message': "Գտնվեց նոր բլոկ: {{ block_hash }}: Պարգև՝ {{ reward }} GHOST ավելացվել է ձեր հաշվին:",
+        'mine_last_block': "Վերջին Բլոկ", 'mine_difficulty': "Բարդություն", 'mine_reward': "Ընթացիկ Պարգև",
+        'mine_next_halving': "Հաջորդ Կիսում", 'mine_limit_error': "Դուք կարող եք մայնինգ անել օրը միայն մեկ անգամ: Մնացած ժամանակը:",
+        'mine_start_btn': "Սկսել Մայնինգ"
+    }
 }
 
 # --- YARDIMCI FONKSİYONLAR / HELPERS ---
 def extract_keywords(content_str):
-    """
-    TR: HTML etiketlerini temizler ve metinden anahtar kelimeleri ayıklar.
-    EN: Cleans HTML tags and extracts keywords from the text.
-    """
     try:
         text = re.sub(r'<(script|style).*?>.*?</\1>', '', content_str, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r'<.*?>', ' ', text)
@@ -101,23 +135,26 @@ def extract_keywords(content_str):
         return ""
 
 def calculate_asset_fee(size_bytes, asset_type):
-    """
-    TR: Varlık tipine göre doğru ücreti (GHOST cinsinden) hesaplar.
-    EN: Calculates the correct fee (in GHOST) based on asset type.
-    """
     if asset_type == 'domain':
-        # TR: Domain tescilinde boyuttan bağımsız sabit ücret.
-        # EN: Fixed fee for domain registration, regardless of size.
         return DOMAIN_REGISTRATION_FEE
     else:
-        # TR: Diğer varlıklar için boyuta bağlı depolama ücreti (MB başına 0.01 GHOST).
-        # EN: Size-dependent storage fee for other assets (0.01 GHOST per MB).
-        return round((size_bytes / (1024 * 1024)) * STORAGE_COST_PER_MB, 4) # 4 ondalık hassasiyet
+        return round((size_bytes / (1024 * 1024)) * STORAGE_COST_PER_MB, 5)
+
+def calculate_block_reward(block_index):
+    # TR: Yarılanma (Halving) hesaplaması. Her 2000 blokta bir ödül yarıya iner.
+    # EN: Halving calculation. Reward halves every 2000 blocks.
+    halvings = block_index // HALVING_INTERVAL
+    reward = INITIAL_BLOCK_REWARD / (2 ** halvings)
+    return max(reward, 0.0001) # Minimum bir ödül bırak
+
+def calculate_difficulty(active_peer_count):
+    # TR: Dinamik Zorluk: Her 5 peer için zorluk 1 artar.
+    # EN: Dynamic Difficulty: Difficulty increases by 1 for every 5 peers.
+    increase = active_peer_count // 5
+    return BASE_DIFFICULTY + increase
 
 # --- VERİTABANI YÖNETİCİSİ / DATABASE MANAGER ---
 class DatabaseManager:
-    # TR: SQLite veritabanı işlemlerini yönetir. (Kod bu kısımda değişmedi)
-    # EN: Manages SQLite database operations. (Code unchanged in this section)
     def __init__(self, db_file):
         self.db_file = db_file
         self.init_db()
@@ -131,12 +168,25 @@ class DatabaseManager:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        cursor.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, name TEXT, surname TEXT, wallet_public_key TEXT UNIQUE, balance REAL DEFAULT 50)''')
+        # TR: Tabloları oluştur
+        # EN: Create tables
+        cursor.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, name TEXT, surname TEXT, wallet_public_key TEXT UNIQUE, balance REAL DEFAULT 50, last_mined REAL DEFAULT 0)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS blocks (block_index INTEGER PRIMARY KEY, timestamp REAL, previous_hash TEXT, block_hash TEXT, proof INTEGER, miner_key TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS assets (asset_id TEXT PRIMARY KEY, owner_pub_key TEXT, type TEXT, name TEXT, content BLOB, storage_size INTEGER, creation_time REAL, expiry_time REAL, keywords TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS transactions (tx_id TEXT PRIMARY KEY, sender TEXT, recipient TEXT, amount REAL, timestamp REAL, block_index INTEGER DEFAULT 0)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS mesh_peers (ip_address TEXT PRIMARY KEY, last_seen REAL)''')
         
+        # --- SÜTUN KONTROLÜ (Mevcut DB'yi Koruma) ---
+        # TR: Eksik sütunları (güncellemelerden gelen) kontrol et ve ekle
+        # EN: Check and add missing columns (from updates)
+        
+        # TR: 'last_mined' sütununu kontrol et (users tablosu için yeni özellik)
+        try:
+            cursor.execute("SELECT last_mined FROM users LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute("ALTER TABLE users ADD COLUMN last_mined REAL DEFAULT 0")
+            logger.warning("DB Update: 'last_mined' column added to users table.")
+
         for table, column in [('assets', 'keywords'), ('blocks', 'miner_key'), ('assets', 'is_public')]:
             try:
                 cursor.execute(f"SELECT {column} FROM {table} LIMIT 1")
@@ -157,14 +207,10 @@ class DatabaseManager:
 
 # --- ASSET MANAGER ---
 class AssetManager:
-    # TR: Varlık Kaydı ve Silme işlemlerini yönetir.
-    # EN: Manages Asset Registration and Deletion.
     def __init__(self, db_manager):
         self.db = db_manager
         
     def register_asset(self, owner_key, asset_type, name, content, is_file=False):
-        # TR: Yeni bir varlık kaydeder ve kullanıcı bakiyesinden ücret keser.
-        # EN: Registers a new asset and deducts fee from user balance.
         keywords = ""
         if is_file:
             content.seek(0)
@@ -175,47 +221,44 @@ class AssetManager:
                 keywords = extract_keywords(content)
             
         size = len(content_bytes)
-        # TR: Ücreti yeni fonksiyondan al
-        # EN: Get the fee from the new function
         fee = calculate_asset_fee(size, asset_type)
 
         conn = self.db.get_connection()
-        user_balance = conn.execute("SELECT balance FROM users WHERE wallet_public_key = ?", (owner_key,)).fetchone()['balance']
+        user_balance_row = conn.execute("SELECT balance FROM users WHERE wallet_public_key = ?", (owner_key,)).fetchone()
         
-        if user_balance < fee:
+        if not user_balance_row or user_balance_row['balance'] < fee:
              conn.close()
-             return False, "Yetersiz bakiye. Tescil/Barındırma ücreti: {} GHOST".format(fee)
-             
+             return False, f"Yetersiz bakiye. Gerekli: {fee} GHOST"
+
         try:
             conn.execute("INSERT OR REPLACE INTO assets (asset_id, owner_pub_key, type, name, content, storage_size, creation_time, expiry_time, keywords) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                          (str(uuid4()), owner_key, asset_type, name, content_bytes, size, time.time(), time.time() + DOMAIN_EXPIRY_SECONDS, keywords))
-            # TR: Ücreti bakiyeden kes
-            # EN: Deduct the fee from balance
+            
             conn.execute("UPDATE users SET balance = balance - ? WHERE wallet_public_key = ?", (fee, owner_key))
             conn.commit()
-            return True, f"Registered Successfully. Fee paid: {fee} GHOST"
+            return True, f"Başarılı. Ücret: {fee} GHOST"
         except Exception as e:
             logger.error(f"Asset registration failed: {e}")
             return False, str(e)
+        finally:
+            conn.close()
 
     def delete_asset(self, asset_id, owner_key):
-        # TR: Varlığı siler ve kullanıcıya geri bildirimde bulunur. (Kod bu kısımda değişmedi)
-        # EN: Deletes the asset and notifies the user. (Code unchanged in this section)
         conn = self.db.get_connection()
         try:
             cursor = conn.cursor()
             result = cursor.execute("DELETE FROM assets WHERE asset_id = ? AND owner_pub_key = ?", (asset_id, owner_key))
             conn.commit()
             if result.rowcount > 0:
-                return True, "Asset deleted successfully."
+                return True, "Asset deleted."
             else:
-                return False, "Asset not found or unauthorized."
+                return False, "Not found."
         except Exception as e:
-            logger.error(f"Asset deletion failed: {e}")
             return False, str(e)
+        finally:
+            conn.close()
 
-# --- BLOK ZİNCİRİ YÖNETİCİSİ / BLOCKCHAIN MANAGER ---
-# (Kod bu kısımda değişmedi)
+# --- BLOCKCHAIN MANAGER ---
 class BlockchainManager:
     def __init__(self, db_manager):
         self.db = db_manager
@@ -230,39 +273,45 @@ class BlockchainManager:
         block_string = json.dumps({'index': index, 'timestamp': timestamp, 'data': data, 'previous_hash': previous_hash, 'proof': proof, 'miner': miner_key}, sort_keys=True)
         return hashlib.sha256(block_string.encode()).hexdigest()
 
-    def proof_of_work(self, last_proof):
+    def proof_of_work(self, last_proof, difficulty):
+        # TR: Zorluk seviyesi parametre olarak alınıyor
+        # EN: Difficulty level is taken as parameter
         proof = 0
-        while self.is_valid_proof(last_proof, proof) is False:
+        while self.is_valid_proof(last_proof, proof, difficulty) is False:
             proof += 1
         return proof
 
-    def is_valid_proof(self, last_proof, proof):
+    def is_valid_proof(self, last_proof, proof, difficulty):
         guess = f'{last_proof}{proof}'.encode()
         guess_hash = hashlib.sha256(guess).hexdigest()
-        return guess_hash[:MINING_DIFFICULTY] == '0' * MINING_DIFFICULTY
+        # TR: Dinamik zorluk kontrolü
+        # EN: Dynamic difficulty check
+        return guess_hash[:difficulty] == '0' * difficulty
 
-    def add_block(self, proof, previous_hash, miner_key):
+    def add_block(self, proof, previous_hash, miner_key, reward):
         last_block = self.get_last_block()
         index = last_block['block_index'] + 1
         timestamp = time.time()
         data = [] 
+
         new_hash = self.hash_block(index, timestamp, data, previous_hash, proof, miner_key)
         
         conn = self.db.get_connection()
         try:
             conn.execute("INSERT INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?, ?, ?, ?, ?, ?)",
                          (index, timestamp, previous_hash, new_hash, proof, miner_key))
-            conn.execute("UPDATE users SET balance = balance + ? WHERE wallet_public_key = ?", (BLOCK_REWARD, miner_key))
+            # TR: Hesaplanmış ödülü ver
+            # EN: Give calculated reward
+            conn.execute("UPDATE users SET balance = balance + ? WHERE wallet_public_key = ?", (reward, miner_key))
             conn.commit()
-            logger.info(f"Block {index} mined successfully by {miner_key}. Reward: {BLOCK_REWARD}")
             return new_hash
         except Exception as e:
             logger.error(f"Failed to add block: {e}")
-            conn.close()
             return None
+        finally:
+            conn.close()
 
-# --- MESH AĞI YÖNETİCİSİ / MESH NETWORK MANAGER ---
-# (Kod bu kısımda değişmedi)
+# --- MESH MANAGER ---
 class MeshManager:
     def __init__(self, db_manager):
         self.db = db_manager
@@ -273,12 +322,11 @@ class MeshManager:
             conn.execute("INSERT OR REPLACE INTO mesh_peers (ip_address, last_seen) VALUES (?, ?)",
                          (ip_address, time.time()))
             conn.commit()
-            conn.close()
             return True
-        except Exception as e:
-            logger.error(f"Peer registration failed: {e}")
-            conn.close()
+        except Exception:
             return False
+        finally:
+            conn.close()
 
     def get_active_peers(self, timeout_seconds=120):
         conn = self.db.get_connection()
@@ -288,13 +336,14 @@ class MeshManager:
         return count
 
 
-# --- UYGULAMA BAŞLATMA / APP START ---
+# --- INIT ---
 db = DatabaseManager(DB_FILE)
 assets_mgr = AssetManager(db)
 blockchain_mgr = BlockchainManager(db)
 mesh_mgr = MeshManager(db)
 
-# --- LAYOUT & UI (Ana Şablon) ---
+# --- HTML TEMPLATES ---
+
 LAYOUT = """
 <!doctype html>
 <html>
@@ -317,6 +366,11 @@ LAYOUT = """
         .login-form button { width: 100%; }
         .success { color: #4caf50; }
         .error { color: #f44336; }
+        .header-bar { display: flex; justify-content: space-between; align-items: center; }
+        .lang-switch a { margin-left: 10px; color: #ffeb3b; text-decoration: none; }
+        .flex-container { display: flex; gap: 20px; flex-wrap: wrap; }
+        .flex-item { flex: 1; min-width: 300px; }
+        .nav-links a { margin-right: 15px; font-weight: bold; }
     </style>
     <script>
         function copyLink(link, btn) {
@@ -325,16 +379,17 @@ LAYOUT = """
             document.body.appendChild(area);
             area.select(); document.execCommand('copy');
             document.body.removeChild(area);
+            let originalText = btn.innerText;
             btn.innerText = "{{ lang['media_link_copy'] }}";
-            setTimeout(() => { btn.innerText = "[Link]"; }, 1500);
+            setTimeout(() => { btn.innerText = originalText; }, 1500);
             return false;
         }
     </script>
 </head>
 <body>
-    <div style="display:flex; justify-content:space-between; align-items:center;">
+    <div class="header-bar">
         <h2>👻 GhostProtocol</h2>
-        <div class="lang">
+        <div class="lang-switch">
             <a href="{{ url_for('set_lang', lang='tr') }}">TR🇹🇷</a> | 
             <a href="{{ url_for('set_lang', lang='en') }}">EN🇬🇧</a> | 
             <a href="{{ url_for('set_lang', lang='ru') }}">RU🇷🇺</a> | 
@@ -342,26 +397,20 @@ LAYOUT = """
         </div>
     </div>
     
-    {# TR: Arama Formu #}
-    {# EN: Search Form #}
-    <form class="search-form" action="{{ url_for('search_engine') }}" method="GET">
-        <input type="text" name="q" placeholder="{{ lang['search_title'] }}..." required>
-        <button type="submit">{{ lang['search'] }}</button>
-    </form>
-    
     <div class="card">
-        {# TR: Sunucu ve Peer Durumu Bilgisi #}
-        {# EN: Server and Peer Status Information #}
         📡 {{ lang['server_status'] }}: <span style="color:#4caf50;">{{ lang['status_online'] }}</span> | 
         🔗 {{ lang['active_peers'] }}: {{ active_peers_count }}
         <hr style="border-top: 1px solid #333; margin: 10px 0;">
         
         {% if session.get('username') %}
             👤 {{ session['username'] }} | 💰 {{ session.get('balance', 0)|round(4) }} GHOST
-            <br>
-            <a href="{{ url_for('dashboard') }}">{{ lang['dashboard_title'] }}</a> | 
-            <a href="{{ url_for('mine') }}">{{ lang['mining_title'] }}</a> | 
-            <a href="{{ url_for('logout') }}">{{ lang['logout'] }}</a>
+            <br><br>
+            <div class="nav-links">
+                <a href="{{ url_for('dashboard') }}">{{ lang['dashboard_title'] }}</a> | 
+                <a href="{{ url_for('mine') }}">{{ lang['mining_title'] }}</a> | 
+                <a href="{{ url_for('search_engine') }}">{{ lang['search'] }}</a> |
+                <a href="{{ url_for('logout') }}">{{ lang['logout'] }}</a>
+            </div>
         {% else %}
             <a href="{{ url_for('login') }}">{{ lang['login'] }}</a> | <a href="{{ url_for('register') }}">{{ lang['register'] }}</a>
         {% endif %}
@@ -373,33 +422,35 @@ LAYOUT = """
 </html>
 """
 
-# --- DASHBOARD HTML ŞABLONU ---
 DASHBOARD_UI = """
 {% extends 'base.html' %}
 {% block content %}
-    <div class="card">
-        {# TR: Başlık güncellendi #}
-        {# EN: Title updated #}
-        <h3>{{ lang['domain_title'] }}</h3>
-        <form method="POST" action="{{ url_for('dashboard') }}">
-            <input type="hidden" name="action" value="register_domain">
-            <input type="text" name="name" placeholder="alanadi.ghost" required><br>
-            <textarea name="data" placeholder="HTML İçeriği" style="width:98%; height:200px; margin-top:10px;" required></textarea><br>
-            <button class="action-button" type="submit">{{ lang['register_btn'] }}</button>
-        </form>
+    <div class="flex-container">
+        <div class="card flex-item">
+            <h3>{{ lang['domain_title'] }}</h3>
+            <form method="POST" action="{{ url_for('dashboard') }}">
+                <input type="hidden" name="action" value="register_domain">
+                <input type="text" name="name" placeholder="alanadi.ghost" required><br>
+                <textarea name="data" placeholder="HTML İçeriği" style="width:98%; height:150px; margin-top:10px;" required></textarea><br>
+                <button class="action-button" type="submit">{{ lang['register_btn'] }}</button>
+            </form>
+        </div>
+        
+        <div class="card flex-item">
+            <h3>{{ lang['media_title'] }}</h3>
+            <p style="font-size:0.9em; color:#aaa;">{{ lang['media_info'] }}</p>
+            <p><strong>Barındırma:</strong> {{ STORAGE_COST_PER_MB }} GHOST / MB</p>
+            <form method="POST" action="{{ url_for('dashboard') }}" enctype="multipart/form-data">
+                <input type="hidden" name="action" value="upload_media">
+                <input type="file" name="file" required><br>
+                <button class="action-button" type="submit" style="margin-top:10px;">{{ lang['media_title'] }}</button>
+            </form>
+        </div>
     </div>
-    <div class="card">
-        <h3>{{ lang['media_title'] }} (Barındırma Ücreti: {{ STORAGE_COST_PER_MB }} GHOST / MB)</h3>
-        <p>{{ lang['media_info'] }}</p>
-        <form method="POST" action="{{ url_for('dashboard') }}" enctype="multipart/form-data">
-            <input type="hidden" name="action" value="upload_media">
-            <input type="file" name="file" required><br>
-            <button class="action-button" type="submit" style="margin-top:10px;">{{ lang['media_title'] }}</button>
-        </form>
-    </div>
+
     <div class="card">
         <h3>{{ lang['media_title'] }} ({{ assets|length }})</h3>
-        <table>
+        <table style="width:100%">
             <tr>
                 <th>{{ lang['asset_name'] }}</th>
                 <th>{{ lang['asset_type'] }}</th>
@@ -415,9 +466,7 @@ DASHBOARD_UI = """
             <tr>
                 <td>{{ a.name }} <br><span style="font-size: 0.7em;">ID: {{ a.asset_id[:8] }}...</span></td>
                 <td>{{ a.type | upper }}</td>
-                {# TR: Ücret gösterimi güncellendi #}
-                {# EN: Fee display updated #}
-                <td>{{ asset_fee_calculated }} GHOST</td> 
+                <td>{{ asset_fee_calculated }}{{ lang['monthly_fee_unit'] }}</td>
                 <td>{{ datetime.fromtimestamp(a.expiry_time).strftime('%Y-%m-%d') }}</td>
                 <td>
                     <a href="{{ asset_relative_link }}" target="_blank">Gör</a> 
@@ -425,8 +474,10 @@ DASHBOARD_UI = """
                     <a href="javascript:void(0);" onclick="return copyLink('{{ asset_external_link }}', this)">[Link]</a>
                 </td>
                 <td>
+                    {% if a.type == 'domain' %}
                     <a href="{{ url_for('edit_asset', asset_id=a.asset_id) }}">{{ lang['edit'] }}</a>
                     |
+                    {% endif %}
                     <form method="POST" style="display:inline;" onsubmit="return confirm('Bu varlığı silmek istediğinizden emin misiniz?');">
                         <input type="hidden" name="action" value="delete_asset">
                         <input type="hidden" name="asset_id" value="{{ a.asset_id }}">
@@ -437,11 +488,9 @@ DASHBOARD_UI = """
             {% endfor %}
         </table>
     </div>
-
 {% endblock %}
 """
 
-# --- LOGIN/REGISTER HTML ŞABLONU (Değişmedi) ---
 LOGIN_UI = """
 {% extends 'base.html' %}
 {% block content %}
@@ -471,26 +520,61 @@ REGISTER_UI = """
     </div>
 {% endblock %}
 """
-# --- MINING HTML ŞABLONU (Değişmedi) ---
+
 MINING_UI = """
 {% extends 'base.html' %}
 {% block content %}
     <div class="card">
         <h2>{{ lang['mining_title'] }}</h2>
+        <p><strong>{{ lang['mine_difficulty'] }}:</strong> {{ difficulty }}</p>
+        <p><strong>{{ lang['mine_reward'] }}:</strong> {{ current_reward }} GHOST</p>
+        <p><strong>{{ lang['mine_last_block'] }}:</strong> #{{ last_block.block_index }}</p>
+        <p><strong>{{ lang['mine_next_halving'] }}:</strong> Blok #{{ next_halving }}</p>
+        
+        <hr style="border-top:1px solid #444; margin: 15px 0;">
+
         {% if new_hash %}
-            <p class="success">🎉 {{ lang['mine_message'] | replace('{{ block_hash }}', new_hash[:12] + '...') | replace('{{ reward }}', BLOCK_REWARD) }}</p>
-        {% else %}
-            <p>Son blok: {{ last_block.block_index }} ({{ last_block.block_hash[:12] }}...)</p>
-            <p>Zorluk: {{ MINING_DIFFICULTY }}</p>
-            <p>Madencilik başlamak için butona tıklayın.</p>
+            <p class="success">🎉 {{ lang['mine_message'] | replace('{{ block_hash }}', new_hash[:12] + '...') | replace('{{ reward }}', current_reward) }}</p>
         {% endif %}
+        
         <form method="POST" action="{{ url_for('mine') }}">
-            <button class="action-button" type="submit">Madenciliği Başlat / Yeniden Dene</button>
+            <button class="action-button" type="submit">{{ lang['mine_start_btn'] }}</button>
         </form>
     </div>
 {% endblock %}
 """
 
+SEARCH_UI = """
+{% extends 'base.html' %}
+{% block content %}
+    <div class="card">
+        <h3>{{ lang['search_title'] }}</h3>
+        <form action="{{ url_for('search_engine') }}" method="GET" class="search-form">
+            <input type="text" name="q" placeholder="{{ lang['search_title'] }}..." value="{{ query }}" required>
+            <button type="submit">{{ lang['search'] }}</button>
+        </form>
+    </div>
+    
+    {% if query %}
+    <div class="card">
+        <h3>Sonuçlar: '{{ query }}' ({{ results|length }})</h3>
+        {% if results %}
+        <table style="width:100%">
+            <tr><th>.ghost Domain</th><th>İçerik (Önizleme)</th></tr>
+            {% for r in results %}
+            <tr>
+                <td><a href="{{ url_for('view_asset', asset_id=r['asset_id']) }}" target="_blank">{{ r['name'] }}</a></td>
+                <td>{{ r['content'][:100].decode('utf-8', 'ignore') }}...</td>
+            </tr>
+            {% endfor %}
+        </table>
+        {% else %}
+        <p>Sonuç bulunamadı.</p>
+        {% endif %}
+    </div>
+    {% endif %}
+{% endblock %}
+"""
 
 # --- ROTALAR / ROUTES ---
 
@@ -513,15 +597,14 @@ def login():
 def handle_login():
     username = request.form['username']
     password = request.form['password']
-    
     conn = db.get_connection()
     user = conn.execute("SELECT wallet_public_key, balance FROM users WHERE username = ? AND password = ?", (username, password)).fetchone()
-
     if user:
         session['username'] = username
         session['pub_key'] = user['wallet_public_key']
         session['balance'] = user['balance']
     else:
+        # TR: Simülasyon: Kullanıcı yoksa oluştur
         if username and password:
             pub_key = hashlib.sha256(username.encode()).hexdigest()[:20]
             try:
@@ -533,12 +616,10 @@ def handle_login():
             except sqlite3.IntegrityError:
                 pass
     conn.close()
-
     if session.get('username'):
         return redirect(url_for('dashboard'))
     else:
         return redirect(url_for('login'))
-
 
 @app.route('/logout') 
 def logout():
@@ -552,10 +633,8 @@ def register():
         username = request.form['username']
         password = request.form['password']
         password_confirm = request.form['password_confirm']
-
         if password != password_confirm:
             return render_template_string(REGISTER_UI, lang=L, error="Şifreler uyuşmuyor.", active_peers_count=session.get('active_peers_count'))
-        
         pub_key = hashlib.sha256(username.encode()).hexdigest()[:20] 
         conn = db.get_connection()
         try:
@@ -566,29 +645,23 @@ def register():
         except sqlite3.IntegrityError:
             conn.close()
             return render_template_string(REGISTER_UI, lang=L, error="Kullanıcı adı zaten alınmış.", active_peers_count=session.get('active_peers_count'))
-
     return render_template_string(REGISTER_UI, lang=L, active_peers_count=session.get('active_peers_count'))
 
 @app.route('/dashboard', methods=['GET', 'POST'])
 def dashboard():
     if not session.get('username'): return redirect(url_for('login'))
     L = LANGUAGES[session.get('lang', 'tr')]
-    
     message = None
     error = None
 
     if request.method == 'POST':
         action = request.form.get('action')
         pub_key = session['pub_key']
-        
         if action == 'register_domain':
-            # TR: Domain kaydı
             success, res = assets_mgr.register_asset(pub_key, 'domain', request.form['name'], request.form['data'])
-            if success: message = f"Domain kaydedildi: {request.form['name']}. ({res})"
+            if success: message = f"Domain kaydedildi. ({res})"
             else: error = f"Hata: {res}"
-            
         elif action == 'upload_media':
-            # TR: Medya (Dosya) yükleme
             if 'file' in request.files:
                 file = request.files['file']
                 ext = file.filename.split('.')[-1].lower()
@@ -597,18 +670,16 @@ def dashboard():
                 elif ext in ['js']: asset_type = 'js'
                 elif ext in ['woff', 'ttf', 'woff2']: asset_type = 'font'
                 success, res = assets_mgr.register_asset(pub_key, asset_type, file.filename, file, is_file=True)
-                if success: message = f"Varlık yüklendi: {file.filename}. ({res})"
+                if success: message = f"Varlık yüklendi. ({res})"
                 else: error = f"Hata: {res}"
-
         elif action == 'delete_asset':
             asset_id = request.form.get('asset_id')
             success, res = assets_mgr.delete_asset(asset_id, pub_key)
-            if success: message = "Varlık başarıyla silindi."
+            if success: message = "Varlık silindi."
             else: error = f"Silme Hatası: {res}"
             
     conn = db.get_connection()
     assets = conn.execute("SELECT * FROM assets WHERE owner_pub_key = ? ORDER BY creation_time DESC", (session['pub_key'],)).fetchall()
-    
     user_data = conn.execute("SELECT balance FROM users WHERE wallet_public_key = ?", (session['pub_key'],)).fetchone()
     if user_data:
         session['balance'] = user_data['balance']
@@ -623,7 +694,7 @@ def dashboard():
         message=message, 
         error=error,
         active_peers_count=session.get('active_peers_count'),
-        STORAGE_COST_PER_MB=STORAGE_COST_PER_MB # Şablona ücret bilgisini ilet
+        STORAGE_COST_PER_MB=STORAGE_COST_PER_MB 
     )
 
 @app.route('/view_asset/<asset_id>')
@@ -632,7 +703,6 @@ def view_asset(asset_id):
     asset = conn.execute("SELECT * FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
     conn.close()
     if not asset: return "404: Asset Not Found", 404
-
     mimes = {
         'css': 'text/css', 'js': 'application/javascript', 'domain': 'text/html',
         'font': 'font/woff2' if asset['name'].endswith('2') else 'font/woff',
@@ -650,30 +720,66 @@ def mine():
     if not session.get('username'): return redirect(url_for('login'))
     L = LANGUAGES[session.get('lang', 'tr')]
     
-    last_block = blockchain_mgr.get_last_block()
-    new_hash = None
+    conn = db.get_connection()
+    user = conn.execute("SELECT last_mined FROM users WHERE wallet_public_key = ?", (session['pub_key'],)).fetchone()
+    last_mined_time = user['last_mined'] if user else 0
+    conn.close()
     
-    if request.method == 'POST':
-        last_proof = last_block['proof']
-        proof = blockchain_mgr.proof_of_work(last_proof) 
-        new_hash = blockchain_mgr.add_block(proof, last_block['block_hash'], session['pub_key'])
-        
-        if new_hash:
-            conn = db.get_connection()
-            user_data = conn.execute("SELECT balance FROM users WHERE wallet_public_key = ?", (session['pub_key'],)).fetchone()
-            if user_data:
-                session['balance'] = user_data['balance']
-            conn.close()
+    current_time = time.time()
+    # TR: 24 Saatlik limit kontrolü
+    # EN: 24-Hour limit check
+    can_mine = (current_time - last_mined_time) >= 86400
+    
+    last_block = blockchain_mgr.get_last_block()
+    current_block_index = last_block['block_index']
+    
+    # TR: Hesaplamalar
+    # EN: Calculations
+    active_peers = session.get('active_peers_count', 0)
+    difficulty = calculate_difficulty(active_peers)
+    reward = calculate_block_reward(current_block_index)
+    next_halving_block = ((current_block_index // HALVING_INTERVAL) + 1) * HALVING_INTERVAL
+    
+    new_hash = None
+    error = None
 
-        last_block = blockchain_mgr.get_last_block()
+    if request.method == 'POST':
+        if not can_mine:
+            # TR: Limit hatası
+            # EN: Limit error
+            remaining_seconds = 86400 - (current_time - last_mined_time)
+            error = f"{L['mine_limit_error']} {str(timedelta(seconds=int(remaining_seconds)))}"
+        else:
+            last_proof = last_block['proof']
+            proof = blockchain_mgr.proof_of_work(last_proof, difficulty) 
+            new_hash = blockchain_mgr.add_block(proof, last_block['block_hash'], session['pub_key'], reward)
+            
+            if new_hash:
+                conn = db.get_connection()
+                # TR: Madencilik zamanını güncelle
+                # EN: Update mining time
+                conn.execute("UPDATE users SET balance = balance + ?, last_mined = ? WHERE wallet_public_key = ?", (reward, time.time(), session['pub_key']))
+                conn.commit()
+                
+                # Bakiye session güncelle
+                user_data = conn.execute("SELECT balance FROM users WHERE wallet_public_key = ?", (session['pub_key'],)).fetchone()
+                if user_data:
+                    session['balance'] = user_data['balance']
+                conn.close()
+            
+            last_block = blockchain_mgr.get_last_block() # Güncel blok bilgisini al
 
     return render_template_string(MINING_UI, 
         lang=L, 
         last_block=last_block, 
         new_hash=new_hash, 
-        MINING_DIFFICULTY=MINING_DIFFICULTY, 
-        BLOCK_REWARD=BLOCK_REWARD,
-        active_peers_count=session.get('active_peers_count')
+        error=error,
+        MINING_DIFFICULTY=difficulty, 
+        BLOCK_REWARD=reward,
+        current_reward=reward,
+        difficulty=difficulty,
+        next_halving=next_halving_block,
+        active_peers_count=active_peers
     )
 
 @app.route('/search')
@@ -681,38 +787,24 @@ def search_engine():
     query = request.args.get('q', '').lower()
     L = LANGUAGES[session.get('lang', 'tr')]
     conn = db.get_connection()
-    
-    results = conn.execute("SELECT * FROM assets WHERE type='domain' AND (name LIKE ? OR keywords LIKE ?)", (f'%{query}%', f'%{query}%')).fetchall()
+    results = []
+    if query:
+        results = conn.execute("SELECT * FROM assets WHERE type='domain' AND (name LIKE ? OR keywords LIKE ?)", (f'%{query}%', f'%{query}%')).fetchall()
     conn.close()
-    
-    html_output = f"<div class='card'><h3>{L['search_title']} - '{query}' ({len(results)} sonuç)</h3>"
-    if results:
-        html_output += "<table><tr><th>.ghost Domain</th><th>İçerik (İlk 100 Karakter)</th></tr>"
-        for r in results:
-            content_preview = r['content'][:100].decode('utf-8', 'ignore') if r['content'] else ""
-            html_output += f"<tr><td><a href='{url_for('view_asset', asset_id=r['asset_id'])}' target='_blank'>{r['name']}</a></td><td>{content_preview}...</td></tr>"
-        html_output += "</table>"
-    else:
-        html_output += "<p>Sonuç bulunamadı.</p>"
-    html_output += "</div>"
-
-    return render_template_string("{% extends 'base.html' %}{% block content %}" + html_output + "{% endblock %}", lang=L, active_peers_count=session.get('active_peers_count'))
+    return render_template_string(SEARCH_UI, lang=L, query=query, results=results, active_peers_count=session.get('active_peers_count'))
 
 @app.route('/edit_asset/<asset_id>')
 def edit_asset(asset_id):
     if not session.get('username'): return redirect(url_for('login'))
     L = LANGUAGES[session.get('lang', 'tr')]
-    
     return render_template_string("{% extends 'base.html' %}{% block content %}<div class='card'><h2>{{ lang['edit'] }} Asset: {{ asset_id }}</h2><p>Düzenleme formu buraya gelecek.</p></div>{% endblock %}", lang=L, asset_id=asset_id, active_peers_count=session.get('active_peers_count'))
 
-# --- MESH AĞI İLETİŞİM ROTASI (ghost_mesh_node.py ile Konuşma) ---
 @app.route('/peer_update', methods=['POST'])
 def peer_update():
     data = request.get_json()
     ip_address = request.remote_addr 
     if data and 'ip_address' in data:
          ip_address = data['ip_address'] 
-
     if ip_address:
         if mesh_mgr.register_peer(ip_address):
             return jsonify({'message': 'Peer updated successfully.'}), 200
@@ -720,15 +812,13 @@ def peer_update():
             return jsonify({'error': 'Failed to update peer.'}), 500
     return jsonify({'error': 'Invalid data or no IP address detected'}), 400
 
-
-# --- START ---
 if __name__ == '__main__':
-    # TR: Ana şablonu ve alt şablonları Jinja2 ortamına yükle
     app.jinja_env.loader = DictLoader({
         'base.html': LAYOUT, 
         'dashboard.html': DASHBOARD_UI,
         'login.html': LOGIN_UI, 
         'register.html': REGISTER_UI, 
-        'mining.html': MINING_UI
+        'mining.html': MINING_UI,
+        'search.html': SEARCH_UI
     })
     app.run(host='0.0.0.0', port=GHOST_PORT, debug=True, use_reloader=False)
