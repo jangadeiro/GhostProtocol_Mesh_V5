@@ -183,6 +183,16 @@ Multi-Language Support: Turkish, English, Russian and Armenian language support 
 3. Overall Impact
 These changes enable Ghost Mesh Node (GMN) users to reference media or domains shared by GhostProtocol content creators directly via the chain reference (Asset ID), without needing to route through a centralized server.
 
+# 🇬🇧 GhostProtocol Network also works on mobile platforms!
+We haven't forgotten about mobile platforms, which will significantly enhance the decentralization, functionality, and reach of the GhostProtocol network. The GhostProtocol Mobile version, which has a separate Git repository, can be accessed at the following Git address.
+
+https://github.com/jangadeiro/GhostProtocol_Mesh_V2_MOBILE
+
+# 🇹🇷 GhostProtocol Ağı Mobil Platformlarda da Çalışır!
+GhostProtocol ağının merkeziyetsizliğini, işlevselliğini ve erişimini önemli ölçüde artıracak olan mobil platformları da unutmadık. Ayrı bir Git Reposuna sahip olan GhostProtocol Mobil versiyona aşağıdaki git adresinden ulaşabilirsiniz.
+
+https://github.com/jangadeiro/GhostProtocol_Mesh_V2_MOBILE
+
 
 # ⚠️ Disclaimer / Yasal Uyarı
 GhostProtocol is an experimental software designed for educational and research purposes. Use at your own risk. (GhostProtocol eğitim ve araştırma amaçlı tasarlanmış deneysel bir yazılımdır. Kullanım riski size aittir.)
