@@ -38,7 +38,7 @@ DOMAIN_REGISTRATION_FEE = 1.0     # Sabit 1.0 GHOST
 INITIAL_USER_BALANCE = 50.0
 
 # TR: P2P Bootstrap Peer Listesi (İlk bağlantı noktaları)
-KNOWN_PEERS = ["46.101.219.46", "195.200.30.40"] 
+KNOWN_PEERS = ["46.101.219.46", "68.183.12.91"] 
 
 app = Flask(__name__)
 app.secret_key = 'cloud_super_secret_permanency_fix_2024_FINAL_FULL_V3' 
