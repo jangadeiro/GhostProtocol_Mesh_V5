@@ -13,8 +13,6 @@ import socket
 from typing import Optional, Tuple, Dict, Any, List
 from flask import Flask, jsonify, request, render_template_string, session, redirect, url_for, Response
 from uuid import uuid4
-from cryptography.hazmat.primitives.asymmetric import rsa, padding
-from cryptography.hazmat.primitives import serialization, hashes
 from datetime import timedelta, datetime
 from markupsafe import Markup 
 from jinja2 import DictLoader, Template 
@@ -37,11 +35,12 @@ STORAGE_COST_PER_MB = 0.01        # MB başına 0.01 GHOST
 DOMAIN_REGISTRATION_FEE = 1.0     # Sabit 1.0 GHOST
 INITIAL_USER_BALANCE = 50.0
 
-# TR: P2P Bootstrap Peer Listesi (İlk bağlantı noktaları)
+# TR: P2P Bootstrap Peer Listesi (İlk bağlantı noktaları - Droplet IP'leri)
+# EN: P2P Bootstrap Peer List (Initial connection points - Droplet IPs)
 KNOWN_PEERS = ["46.101.219.46", "68.183.12.91"] 
 
 app = Flask(__name__)
-app.secret_key = 'cloud_super_secret_permanency_fix_2024_FINAL_FULL_V3' 
+app.secret_key = 'cloud_super_secret_permanency_fix_2024_FINAL_FULL_V4' 
 app.permanent_session_lifetime = timedelta(days=7) 
 app.config['SESSION_COOKIE_SECURE'] = False 
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' 
@@ -97,60 +96,10 @@ LANGUAGES = {
         'insufficient_balance': "Insufficient balance.", 'transfer_success': "Transfer successful.", 'recipient_not_found': "Recipient not found.",
         'asset_name': "Asset Name", 'asset_type': "Type", 'my_assets_title': "My Registered Assets", 'update_btn': "Update", 'edit_title': "Edit Asset",
         'content_placeholder': "Content (HTML/Text)"
-    },
-    'ru': {
-        'title': "Сервер GhostProtocol", 'status_online': "ОНЛАЙН", 'status_offline': "ОФФЛАЙН",
-        'server_status': "Статус Сервера", 'active_peers': "Активные Пиры",
-        'dashboard_title': "Панель", 'mining_title': "Майнинг", 'logout': "Выход", 'login': "Вход", 'register': "Регистрация", 'search': "Поиск",
-        'wallet_title': "💳 Мой Кошелек", 'pubkey': "Публичный Ключ (Хеш)", 'balance': "Баланс",
-        'domain_title': "💾 Регистрация .ghost", 'media_title': "🖼️ Загрузить Актив", 'asset_action': "Действие", 
-        'status_success': "Успех", 'status_failed': "Ошибка", 
-        'monthly_fee_unit': " GHOST", 'media_link_copy': "Скопировать",
-        'media_info': "Поддерживается: .png, .jpg, .css, .js, .woff, .mp4, .mp3", 'register_btn': "Опубликовать", 
-        'search_title': "🔍 Ghost Поиск (Контент и Домен)", 'edit': "Редактировать", 'delete': "Удалить",
-        'login_prompt': "Войти", 'username': "Имя пользователя", 'password': "Пароль", 'submit': "Отправить",
-        'asset_fee': "Плата (Всего)", 'asset_expires': "Истекает", 'mine_success': "Блок Найден", 
-        'mine_message': "Найден новый блок: {{ block_hash }}. Награда: {{ reward }} GHOST добавлена на ваш счет.",
-        'mine_limit_error': "Вы можете майнить только один раз в день. Оставшееся время:",
-        'wallet_address': "Адрес Кошелька (GHST)", 'last_transactions': "Последние Транзакции", 
-        'tx_id': "ID Транзакции", 'tx_sender': "Отправитель", 'tx_recipient': "Получатель", 'tx_amount': "Сумма", 'tx_timestamp': "Время",
-        'no_transactions': "Пока нет транзакций.",
-        'total_supply': "Общий Объем", 'mined_supply': "В Обращении", 'remaining_supply': "Оставшийся Объем",
-        'mine_last_block': "Последний Блок", 'mine_difficulty': "Сложность", 'mine_reward': "Текущая Награда",
-        'mine_next_halving': "Следующее Уполовинивание", 'view': "Просмотр", 'back_to_dashboard': "Назад",
-        'send_coin_title': "Отправить Монеты", 'recipient_address': "Адрес Получателя", 'amount': "Сумма", 'send_btn': "Отправить",
-        'insufficient_balance': "Недостаточно средств.", 'transfer_success': "Перевод выполнен успешно.", 'recipient_not_found': "Получатель не найден.",
-        'asset_name': "Имя Актива", 'asset_type': "Тип", 'my_assets_title': "Мои Активы", 'update_btn': "Обновить", 'edit_title': "Редактировать Актив",
-        'content_placeholder': "Контент (HTML/Текст)"
-    },
-    'hy': {
-        'title': "GhostProtocol Սերվեր", 'status_online': "ԱՌՑԱՆՑ", 'status_offline': "ԱՆՑԱՆՑ",
-        'server_status': "Սերվերի Կարգավիճակը", 'active_peers': "Ակտիվ Փիրեր",
-        'dashboard_title': "Վահանակ", 'mining_title': "Մայնինգ", 'logout': "Ելք", 'login': "Մուտք", 'register': "Գրանցվել", 'search': "Որոնում",
-        'wallet_title': "💳 Իմ Դրամապանակը", 'pubkey': "Հանրային Բանալի (Հեշ)", 'balance': "Մնացորդ",
-        'domain_title': "💾 .ghost Գրանցում", 'media_title': "🖼️ Բեռնել Ակտիվ", 'asset_action': "Գործողություն", 
-        'status_success': "Հաջող", 'status_failed': "Ձախողված", 
-        'monthly_fee_unit': " GHOST", 'media_link_copy': "Պատճենել",
-        'media_info': "Աջակցվում է՝ .png, .jpg, .css, .js, .woff, .mp4, .mp3", 'register_btn': "Հրատարակել", 
-        'search_title': "🔍 Ghost Որոնում (Բովանդակություն և Դոմեն)", 'edit': "Խմբագրել", 'delete': "Ջնջել",
-        'login_prompt': "Մուտք գործել", 'username': "Օգտվողի անուն", 'password': "Գաղտնաբառ", 'submit': "Ուղարկել",
-        'asset_fee': "Վճար (Ընդհանուր)", 'asset_expires': "Ժամկետը", 'mine_success': "Բլոկը Հաջողվեց",
-        'mine_message': "Գտնվեց նոր բլոկ: {{ block_hash }}: Պարգև՝ {{ reward }} GHOST ավելացվել է ձեր հաշվին:",
-        'mine_limit_error': "Դուք կարող եք մայնինգ անել օրը միայն մեկ անգամ: Մնացած ժամանակը:",
-        'wallet_address': "Դրամապանակի Հասցե (GHST)", 'last_transactions': "Վերջին Գործարքները", 
-        'tx_id': "Գործարքի ID", 'tx_sender': "Ուղարկող", 'tx_recipient': "Ստացող", 'tx_amount': "Գումար", 'tx_timestamp': "Ժամանակ",
-        'no_transactions': "Դեռ գործարքներ չկան։",
-        'total_supply': "Ընդհանուր Մատակարարում", 'mined_supply': "Շրջանառվող Մատակարարում", 'remaining_supply': "Մնացորդային Մատակարարում",
-        'mine_last_block': "Վերջին Բլոկ", 'mine_difficulty': "Բարդություն", 'mine_reward': "Ընթացիկ Պարգև",
-        'mine_next_halving': "Հաջորդ Կիսում", 'view': "Դիտել", 'back_to_dashboard': "Վերադառնալ",
-        'send_coin_title': "Ուղարկել Մետաղադրամ", 'recipient_address': "Ստացողի Հասցեն", 'amount': "Գումար", 'send_btn': "Ուղարկել",
-        'insufficient_balance': "Անբավարար միջոցներ:", 'transfer_success': "Փոխանցումը հաջողվեց:", 'recipient_not_found': "Ստացողը չի գտնվել:",
-        'asset_name': "Ակտիվի Անուն", 'asset_type': "Տեսակ", 'my_assets_title': "Իմ Ակտիվները", 'update_btn': "Թարմացնել", 'edit_title': "Խմբագրել",
-        'content_placeholder': "Բովանդակություն (HTML/Տեքստ)"
     }
 }
 
-# --- YARDIMCI FONKSİYONLAR ---
+# --- YARDIMCI FONKSİYONLAR / HELPER FUNCTIONS ---
 def generate_user_keys(username):
     original_hash = hashlib.sha256(username.encode()).hexdigest()[:20]
     ghst_address = f"GHST{original_hash}" 
@@ -181,7 +130,7 @@ def calculate_difficulty(active_peer_count):
     increase = active_peer_count // 5
     return BASE_DIFFICULTY + increase
 
-# --- VERİTABANI YÖNETİCİSİ ---
+# --- VERİTABANI YÖNETİCİSİ / DATABASE MANAGER ---
 class DatabaseManager:
     def __init__(self, db_file):
         self.db_file = db_file
@@ -221,17 +170,23 @@ class DatabaseManager:
         cursor.execute("INSERT INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?, ?, ?, ?, ?, ?)",
                        (1, time.time(), '0', genesis_hash, 100, 'GhostProtocol_System'))
 
-# --- MANAGER SINIFLARI ---
+# --- MANAGER SINIFLARI / MANAGER CLASSES ---
 
 class AssetManager:
     def __init__(self, db_manager):
         self.db = db_manager
         
     def register_asset(self, owner_key, asset_type, name, content, is_file=False):
+        # TR: Domain sonuna otomatik .ghost ekleme
+        # EN: Automatically add .ghost to the end of the domain
+        if asset_type == 'domain' and not name.endswith('.ghost'):
+            name += '.ghost'
+
         keywords = ""
-        # 1. Eksiklik Giderildi: İçerik boş olabilir (Domain için)
+        # TR: Boş içerik için varsayılan mesaj (İngilizce)
+        # EN: Default message for empty content (English)
         if not content and asset_type == 'domain':
-            content = "<h1>Yeni Ghost Sitesi</h1><p>Yapım aşamasında...</p>"
+            content = "<h1>New Ghost Site</h1><p>Under Construction...</p>"
 
         if is_file:
             content.seek(0)
@@ -268,7 +223,6 @@ class AssetManager:
             conn.close()
 
     def update_asset_content(self, asset_id, owner_key, new_content):
-        # 2. Hata Düzeltildi: İçerik düzenleme fonksiyonu eklendi
         conn = self.db.get_connection()
         try:
             keywords = extract_keywords(new_content)
@@ -297,6 +251,40 @@ class AssetManager:
         finally:
             conn.close()
 
+    def get_all_assets_meta(self):
+        # TR: Senkronizasyon için varlık listesini döndürür (İçeriksiz)
+        # EN: Returns asset list for synchronization (Without content)
+        conn = self.db.get_connection()
+        assets = conn.execute("SELECT asset_id, owner_pub_key, type, name, creation_time FROM assets").fetchall()
+        conn.close()
+        return [dict(a) for a in assets]
+
+    def get_asset_by_id(self, asset_id):
+        conn = self.db.get_connection()
+        asset = conn.execute("SELECT * FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
+        conn.close()
+        if asset:
+            # Bytes to base64 for JSON serialization
+            d = dict(asset)
+            d['content'] = base64.b64encode(d['content']).decode('utf-8')
+            return d
+        return None
+
+    def sync_asset(self, asset_data):
+        # TR: Diğer peer'dan gelen varlığı kaydeder
+        # EN: Saves asset received from other peer
+        conn = self.db.get_connection()
+        try:
+            content_bytes = base64.b64decode(asset_data['content'])
+            conn.execute("INSERT OR IGNORE INTO assets (asset_id, owner_pub_key, type, name, content, storage_size, creation_time, expiry_time, keywords) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (asset_data['asset_id'], asset_data['owner_pub_key'], asset_data['type'], asset_data['name'], content_bytes, 
+                          len(content_bytes), asset_data['creation_time'], asset_data['expiry_time'], asset_data.get('keywords', '')))
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Asset sync error: {e}")
+        finally:
+            conn.close()
+
 class BlockchainManager:
     def __init__(self, db_manager):
         self.db = db_manager
@@ -306,6 +294,35 @@ class BlockchainManager:
         block = conn.execute("SELECT * FROM blocks ORDER BY block_index DESC LIMIT 1").fetchone()
         conn.close()
         return block
+
+    def get_all_headers(self):
+        # TR: Senkronizasyon için tüm blok başlıklarını döndürür
+        # EN: Returns all block headers for synchronization
+        conn = self.db.get_connection()
+        headers = conn.execute("SELECT block_index, block_hash FROM blocks ORDER BY block_index ASC").fetchall()
+        conn.close()
+        return [dict(h) for h in headers]
+
+    def get_block_by_hash(self, block_hash):
+        conn = self.db.get_connection()
+        block = conn.execute("SELECT * FROM blocks WHERE block_hash = ?", (block_hash,)).fetchone()
+        conn.close()
+        return dict(block) if block else None
+
+    def add_block_from_peer(self, block_data):
+        # TR: Peer'dan gelen bloğu ekle (Basit doğrulama)
+        # EN: Add block from peer (Simple validation)
+        conn = self.db.get_connection()
+        try:
+            conn.execute("INSERT OR IGNORE INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?, ?, ?, ?, ?, ?)",
+                         (block_data['block_index'], block_data['timestamp'], block_data['previous_hash'], block_data['block_hash'], block_data['proof'], block_data['miner_key']))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Block sync error: {e}")
+            return False
+        finally:
+            conn.close()
 
     def hash_block(self, index, timestamp, previous_hash, proof, miner_key):
         block_string = json.dumps({'index': index, 'timestamp': timestamp, 'previous_hash': previous_hash, 'proof': proof, 'miner': miner_key}, sort_keys=True)
@@ -409,6 +426,8 @@ class BlockchainManager:
 class MeshManager:
     def __init__(self, db_manager):
         self.db = db_manager
+        # TR: Bilinen peerları (Droplet IP'leri) veritabanına ekle
+        # EN: Add known peers (Droplet IPs) to database
         for peer in KNOWN_PEERS:
             self.register_peer(peer)
             
@@ -424,7 +443,62 @@ class MeshManager:
         threading.Thread(target=self._listen_for_peers, daemon=True).start()
         threading.Thread(target=self._broadcast_presence, daemon=True).start()
         threading.Thread(target=self._cleanup_loop, daemon=True).start()
-        logger.info("MeshManager: Keşif servisleri başlatıldı.")
+        # TR: Senkronizasyon döngüsünü başlat
+        # EN: Start synchronization loop
+        threading.Thread(target=self._sync_loop, daemon=True).start()
+        logger.info("MeshManager: Keşif ve Senkronizasyon servisleri başlatıldı.")
+
+    def _sync_loop(self):
+        # TR: Her 60 saniyede bir diğer peer'larla verileri eşitle
+        # EN: Sync data with other peers every 60 seconds
+        time.sleep(10) # Başlangıçta bekle
+        while True:
+            self.sync_with_network()
+            time.sleep(60)
+
+    def sync_with_network(self):
+        # TR: Aktif peer'lardan blok ve varlık verilerini çek
+        # EN: Fetch block and asset data from active peers
+        conn = self.db.get_connection()
+        peers = conn.execute("SELECT ip_address FROM mesh_peers WHERE last_seen > ?", (time.time() - 3600,)).fetchall()
+        conn.close()
+        
+        my_headers = blockchain_mgr.get_all_headers()
+        my_assets = assets_mgr.get_all_assets_meta()
+        my_asset_ids = {a['asset_id'] for a in my_assets}
+        my_block_hashes = {h['block_hash'] for h in my_headers}
+
+        for peer_row in peers:
+            peer_ip = peer_row['ip_address']
+            if peer_ip == self._get_local_ip(): continue # Kendini atla
+
+            try:
+                # 1. BLOK SENKRONİZASYONU / BLOCK SYNC
+                resp = requests.get(f"http://{peer_ip}:{GHOST_PORT}/api/chain_meta", timeout=3)
+                if resp.status_code == 200:
+                    peer_headers = resp.json()
+                    for ph in peer_headers:
+                        if ph['block_hash'] not in my_block_hashes:
+                            # Eksik bloğu indir
+                            b_resp = requests.get(f"http://{peer_ip}:{GHOST_PORT}/api/block/{ph['block_hash']}", timeout=3)
+                            if b_resp.status_code == 200:
+                                blockchain_mgr.add_block_from_peer(b_resp.json())
+                                logger.info(f"Block synced from {peer_ip}: {ph['block_hash'][:8]}")
+
+                # 2. VARLIK SENKRONİZASYONU / ASSET SYNC
+                resp = requests.get(f"http://{peer_ip}:{GHOST_PORT}/api/assets_meta", timeout=3)
+                if resp.status_code == 200:
+                    peer_assets = resp.json()
+                    for pa in peer_assets:
+                        if pa['asset_id'] not in my_asset_ids:
+                            # Eksik varlığı indir
+                            a_resp = requests.get(f"http://{peer_ip}:{GHOST_PORT}/api/asset_data/{pa['asset_id']}", timeout=3)
+                            if a_resp.status_code == 200:
+                                assets_mgr.sync_asset(a_resp.json())
+                                logger.info(f"Asset synced from {peer_ip}: {pa['name']}")
+
+            except Exception as e:
+                logger.warning(f"Sync failed with {peer_ip}: {e}")
 
     def _broadcast_presence(self):
         while True:
@@ -461,11 +535,11 @@ class MeshManager:
     def _cleanup_loop(self):
         while True:
             conn = self.db.get_connection()
-            cutoff = time.time() - 300
+            cutoff = time.time() - 3600 # 1 saat
             conn.execute("DELETE FROM mesh_peers WHERE last_seen < ?", (cutoff,))
             conn.commit()
             conn.close()
-            time.sleep(300)
+            time.sleep(600)
 
     def register_peer(self, ip_address):
         if ip_address.startswith("127.0") or ip_address == "0.0.0.0": return False
@@ -611,7 +685,7 @@ DASHBOARD_UI = r"""
         <p><strong>Süre:</strong> 6 Ay</p>
         <form method="POST" action="{{ url_for('dashboard') }}">
             <input type="hidden" name="action" value="register_domain">
-            <input type="text" name="domain_name" placeholder="Domain Adı (ornek.ghost)" required pattern="[a-zA-Z0-9.-]+\.ghost$"><br>
+            <input type="text" name="domain_name" placeholder="Domain Adı (ornek)" required pattern="[a-zA-Z0-9.-]+"><br>
             <textarea name="content" placeholder="{{ lang['content_placeholder'] }}" rows="3"></textarea><br>
             <button class="action-button" type="submit">{{ lang['register_btn'] }}</button>
         </form>
@@ -873,7 +947,6 @@ def dashboard():
 
     if request.method == 'POST':
         if action == 'register_domain':
-            # 1. Düzeltme: İçerik zorunlu değil (Varsayılan içerik atanır)
             content = request.form.get('content')
             success, msg = assets_mgr.register_asset(pub_key, 'domain', request.form['domain_name'], content)
             if success: message = msg
@@ -929,7 +1002,6 @@ def edit_asset(asset_id):
         if success: return redirect(url_for('dashboard'))
         else: return f"Hata: {msg}"
 
-    # Mevcut içeriği decode et (Sadece domainler için mantıklı)
     try: current_content = asset['content'].decode('utf-8')
     except: current_content = ""
 
@@ -978,9 +1050,8 @@ def view_asset(asset_id):
     conn.close()
     if not asset: return "Bulunamadı", 404
     
-    # 2. Düzeltme: İçerik türüne göre işlem
     if asset['type'] == 'domain':
-        return asset['content'] # HTML olarak render et
+        return asset['content']
     return Response(asset['content'], mimetype='application/octet-stream')
 
 @app.route('/search')
@@ -1002,6 +1073,27 @@ def peer_update():
     if data and 'ip_address' in data: ip = data['ip_address']
     mesh_mgr.register_peer(ip)
     return jsonify({'status': 'ok'})
+
+# API ENDPOINTS FOR SYNC
+@app.route('/api/chain_meta')
+def api_chain_meta():
+    return jsonify(blockchain_mgr.get_all_headers())
+
+@app.route('/api/block/<block_hash>')
+def api_get_block(block_hash):
+    block = blockchain_mgr.get_block_by_hash(block_hash)
+    if block: return jsonify(block)
+    return jsonify({'error': 'Not found'}), 404
+
+@app.route('/api/assets_meta')
+def api_assets_meta():
+    return jsonify(assets_mgr.get_all_assets_meta())
+
+@app.route('/api/asset_data/<asset_id>')
+def api_get_asset_data(asset_id):
+    asset = assets_mgr.get_asset_by_id(asset_id)
+    if asset: return jsonify(asset)
+    return jsonify({'error': 'Not found'}), 404
 
 if __name__ == '__main__':
     def format_thousands(value):
