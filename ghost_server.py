@@ -32,8 +32,8 @@ DB_FILE = os.path.join(os.getcwd(), "ghost_cloud_v2.db")
 GHOST_PORT = 5000
 UDP_BROADCAST_PORT = 5001 
 DOMAIN_EXPIRY_SECONDS = 15552000  # 6 Ay / 6 Months
-STORAGE_COST_PER_MB = 0.01        # MB başına 0.01 GHOST
-DOMAIN_REGISTRATION_FEE = 1.0     # Sabit 1.0 GHOST
+STORAGE_COST_PER_MB = 0.01        # TR: MB başına 0.01 GHOST / EN: 0.01 GHOST per MB
+DOMAIN_REGISTRATION_FEE = 1.0     # TR: Sabit 1.0 GHOST / EN: Fixed 1.0 GHOST
 INITIAL_USER_BALANCE = 50.0
 
 # TR: P2P Bootstrap Peer Listesi (İlk bağlantı noktaları - Droplet IP'leri)
@@ -188,6 +188,8 @@ class DatabaseManager:
         self.init_db()
 
     def get_connection(self):
+        # TR: Thread güvenliği için check_same_thread=False kullanıldı.
+        # EN: Used check_same_thread=False for thread safety.
         conn = sqlite3.connect(self.db_file, check_same_thread=False, timeout=20) 
         conn.row_factory = sqlite3.Row
         return conn
@@ -199,6 +201,8 @@ class DatabaseManager:
         cursor.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, wallet_public_key TEXT UNIQUE, balance REAL DEFAULT 50, last_mined REAL DEFAULT 0)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS blocks (block_index INTEGER PRIMARY KEY, timestamp REAL, previous_hash TEXT, block_hash TEXT, proof INTEGER, miner_key TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS assets (asset_id TEXT PRIMARY KEY, owner_pub_key TEXT, type TEXT, name TEXT, content BLOB, storage_size INTEGER, creation_time REAL, expiry_time REAL, keywords TEXT)''')
+        # TR: block_index varsayılan 0 (veya NULL), bloğa girince güncellenir.
+        # EN: block_index default 0 (or NULL), updated when included in a block.
         cursor.execute('''CREATE TABLE IF NOT EXISTS transactions (tx_id TEXT PRIMARY KEY, sender TEXT, recipient TEXT, amount REAL, timestamp REAL, block_index INTEGER DEFAULT 0)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS mesh_peers (ip_address TEXT PRIMARY KEY, last_seen REAL)''')
         
@@ -365,8 +369,40 @@ class BlockchainManager:
         # EN: Add block from peer (Simple validation)
         conn = self.db.get_connection()
         try:
-            conn.execute("INSERT OR IGNORE INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?, ?, ?, ?, ?, ?)",
+            # TR: Bloğu veritabanına kaydet
+            # EN: Save block to database
+            cursor = conn.execute("INSERT OR IGNORE INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?, ?, ?, ?, ?, ?)",
                          (block_data['block_index'], block_data['timestamp'], block_data['previous_hash'], block_data['block_hash'], block_data['proof'], block_data['miner_key']))
+            
+            # TR: Eğer blok başarıyla eklendiyse (yani yeni bir bloksa), içerdiği işlemleri işle
+            # EN: If block is successfully added (meaning it's a new block), process the transactions within it
+            if cursor.rowcount > 0:
+                index = block_data['block_index']
+                
+                # 1. Bekleyen işlemleri onayla ve alıcı bakiyelerini güncelle
+                # TR: Block index'i 0 olan (bekleyen) işlemleri bu bloğa ata ve alıcıların bakiyesini güncelle
+                # EN: Assign pending transactions (block_index 0) to this block and update recipient balances
+                pending_txs = conn.execute("SELECT tx_id, sender, recipient, amount FROM transactions WHERE block_index = 0 OR block_index IS NULL").fetchall()
+                for p_tx in pending_txs:
+                    # TR: Alıcı bu sunucuda kayıtlıysa bakiyesini güncelle
+                    # EN: Update recipient balance if recipient is registered on this server
+                    conn.execute("UPDATE users SET balance = balance + ? WHERE wallet_public_key = ?", (p_tx['amount'], p_tx['recipient']))
+                    # TR: İşlemi bu bloğa bağla
+                    # EN: Link the transaction to this block
+                    conn.execute("UPDATE transactions SET block_index = ? WHERE tx_id = ?", (index, p_tx['tx_id']))
+
+                # 2. Madenci ödülünü işle (Lokal hesaplamalar için gerekli)
+                # TR: Madenci ödülünü hesapla ve ödül işlemini kaydet
+                # EN: Calculate miner reward and record the reward transaction
+                reward = self.calculate_block_reward(index)
+                tx_id_reward = str(uuid4()) # TR: Lokal takip için yeni ID / EN: New ID for local tracking
+                conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?, ?, ?, ?, ?, ?)",
+                             (tx_id_reward, "GhostProtocol_System", block_data['miner_key'], reward, block_data['timestamp'], index))
+                
+                # TR: Eğer madenci bu sunucuda bir kullanıcıysa, bakiyesini güncelle
+                # EN: If miner is a user on this server, update their balance
+                conn.execute("UPDATE users SET balance = balance + ? WHERE wallet_public_key = ?", (reward, block_data['miner_key']))
+
             conn.commit()
             return True
         except Exception as e:
@@ -425,11 +461,26 @@ class BlockchainManager:
             conn.execute("INSERT INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?, ?, ?, ?, ?, ?)",
                          (index, timestamp, previous_hash, block_hash, proof, miner_key))
             
-            tx_id = str(uuid4())
+            # TR: Sistem ödülü işlemi
+            # EN: System reward transaction
+            tx_id_reward = str(uuid4())
             conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?, ?, ?, ?, ?, ?)",
-                         (tx_id, "GhostProtocol_System", miner_key, reward, timestamp, index))
+                         (tx_id_reward, "GhostProtocol_System", miner_key, reward, timestamp, index))
             
             conn.execute("UPDATE users SET balance = balance + ?, last_mined = ? WHERE wallet_public_key = ?", (reward, timestamp, miner_key))
+            
+            # BEKLEYEN İŞLEMLERİ BLOĞA DAHİL ET / INCLUDE PENDING TRANSACTIONS
+            # TR: Henüz bloklanmamış (block_index=0) işlemleri bul ve bu bloğa ata.
+            # EN: Find transactions not yet blocked (block_index=0) and assign to this block.
+            pending_txs = conn.execute("SELECT tx_id, sender, recipient, amount FROM transactions WHERE block_index = 0 OR block_index IS NULL").fetchall()
+            for p_tx in pending_txs:
+                # TR: Alıcı bu sunucuda kayıtlıysa bakiyesini güncelle
+                # EN: Update recipient balance if registered on this server
+                conn.execute("UPDATE users SET balance = balance + ? WHERE wallet_public_key = ?", (p_tx['amount'], p_tx['recipient']))
+                # TR: İşlemi bu bloğa bağla
+                # EN: Link transaction to this block
+                conn.execute("UPDATE transactions SET block_index = ? WHERE tx_id = ?", (index, p_tx['tx_id']))
+
             conn.commit()
         except Exception as e:
             logger.error(f"Mining error: {e}")
@@ -457,20 +508,61 @@ class BlockchainManager:
             if not sender or sender['balance'] < amount:
                 return False, "Yetersiz bakiye."
             
-            recipient = conn.execute("SELECT id FROM users WHERE wallet_public_key = ?", (recipient_key,)).fetchone()
-            if not recipient:
-                return False, "Alıcı adresi bulunamadı."
-
+            # TR: Alıcıyı kontrol etmeye gerek yok, ağda başka bir yerde olabilir.
+            # TR: Ancak yerelde varsa hemen bakiyeyi artırmıyoruz, madencilik bekliyoruz (veya senkronizasyon).
+            # TR: Fakat göndericiden hemen düşüyoruz.
+            # EN: No need to check recipient, could be elsewhere on network.
+            # EN: If local, don't increase balance yet, wait for mining (or sync).
+            # EN: But deduct from sender immediately.
+            
             conn.execute("UPDATE users SET balance = balance - ? WHERE wallet_public_key = ?", (amount, sender_key))
-            conn.execute("UPDATE users SET balance = balance + ? WHERE wallet_public_key = ?", (amount, recipient_key))
             
             tx_id = str(uuid4())
-            conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp) VALUES (?, ?, ?, ?, ?)",
-                         (tx_id, sender_key, recipient_key, amount, time.time()))
+            timestamp = time.time()
+            # block_index=0 means pending
+            conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?, ?, ?, ?, ?, ?)",
+                         (tx_id, sender_key, recipient_key, amount, timestamp, 0))
             conn.commit()
-            return True, "Transfer başarılı."
+            
+            # AĞA YAYINLA / BROADCAST TO NETWORK
+            # TR: Bu işlemi diğer peerlara bildir ki onların da bekleyen işlemler listesine girsin.
+            # EN: Broadcast this transaction to other peers so it enters their pending list.
+            self.broadcast_transaction({'tx_id': tx_id, 'sender': sender_key, 'recipient': recipient_key, 'amount': amount, 'timestamp': timestamp})
+
+            return True, "Transfer başarılı. İşlem ağa yayınlandı."
         except Exception as e:
             return False, str(e)
+        finally:
+            conn.close()
+
+    def broadcast_transaction(self, tx_data):
+        # TR: İşlemi bilinen peerlara gönder
+        # EN: Send transaction to known peers
+        def _send():
+            peers = mesh_mgr.get_peer_ips()
+            for peer in peers:
+                try:
+                     requests.post(f"http://{peer}:{GHOST_PORT}/api/send_transaction", json=tx_data, timeout=2)
+                except: pass
+        threading.Thread(target=_send, daemon=True).start()
+
+    def receive_transaction(self, tx_data):
+        # TR: Dışarıdan gelen işlemi kaydet (Pending olarak)
+        # EN: Save incoming transaction (as Pending)
+        conn = self.db.get_connection()
+        try:
+            # TR: Zaten var mı kontrol et
+            # EN: Check if already exists
+            exists = conn.execute("SELECT tx_id FROM transactions WHERE tx_id = ?", (tx_data['tx_id'],)).fetchone()
+            if not exists:
+                conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?, ?, ?, ?, ?, ?)",
+                             (tx_data['tx_id'], tx_data['sender'], tx_data['recipient'], tx_data['amount'], tx_data['timestamp'], 0))
+                # TR: Not: Alıcı bakiyesini burada artırmıyoruz. Madencilik (blok onayı) sırasında artırılacak.
+                # EN: Note: We don't increase recipient balance here. It will be increased during mining/block confirmation.
+                conn.commit()
+                logger.info(f"Transaction received: {tx_data['tx_id']}")
+        except Exception as e:
+            logger.error(f"Receive TX error: {e}")
         finally:
             conn.close()
 
@@ -502,7 +594,7 @@ class MeshManager:
     def _sync_loop(self):
         # TR: Her 60 saniyede bir diğer peer'larla verileri eşitle
         # EN: Sync data with other peers every 60 seconds
-        time.sleep(10) # Başlangıçta bekle
+        time.sleep(10) # TR: Başlangıçta bekle / EN: Wait at startup
         while True:
             self.sync_with_network()
             time.sleep(60)
@@ -521,7 +613,7 @@ class MeshManager:
 
         for peer_row in peers:
             peer_ip = peer_row['ip_address']
-            if peer_ip == self._get_local_ip(): continue # Kendini atla
+            if peer_ip == self._get_local_ip(): continue # TR: Kendini atla / EN: Skip self
 
             try:
                 # 1. BLOK SENKRONİZASYONU / BLOCK SYNC
@@ -530,7 +622,8 @@ class MeshManager:
                     peer_headers = resp.json()
                     for ph in peer_headers:
                         if ph['block_hash'] not in my_block_hashes:
-                            # Eksik bloğu indir
+                            # TR: Eksik bloğu indir
+                            # EN: Download missing block
                             b_resp = requests.get(f"http://{peer_ip}:{GHOST_PORT}/api/block/{ph['block_hash']}", timeout=3)
                             if b_resp.status_code == 200:
                                 blockchain_mgr.add_block_from_peer(b_resp.json())
@@ -542,7 +635,8 @@ class MeshManager:
                     peer_assets = resp.json()
                     for pa in peer_assets:
                         if pa['asset_id'] not in my_asset_ids:
-                            # Eksik varlığı indir
+                            # TR: Eksik varlığı indir
+                            # EN: Download missing asset
                             a_resp = requests.get(f"http://{peer_ip}:{GHOST_PORT}/api/asset_data/{pa['asset_id']}", timeout=3)
                             if a_resp.status_code == 200:
                                 assets_mgr.sync_asset(a_resp.json())
@@ -586,7 +680,7 @@ class MeshManager:
     def _cleanup_loop(self):
         while True:
             conn = self.db.get_connection()
-            cutoff = time.time() - 3600 # 1 saat
+            cutoff = time.time() - 3600 # TR: 1 saat / EN: 1 hour
             conn.execute("DELETE FROM mesh_peers WHERE last_seen < ?", (cutoff,))
             conn.commit()
             conn.close()
@@ -608,6 +702,15 @@ class MeshManager:
         count = conn.execute("SELECT COUNT(*) FROM mesh_peers WHERE last_seen > ?", (cutoff,)).fetchone()[0]
         conn.close()
         return count
+
+    def get_peer_ips(self):
+        # TR: Aktif peerların IP listesini döndür
+        # EN: Return IP list of active peers
+        conn = self.db.get_connection()
+        cutoff = time.time() - 3600
+        peers = conn.execute("SELECT ip_address FROM mesh_peers WHERE last_seen > ?", (cutoff,)).fetchall()
+        conn.close()
+        return [p['ip_address'] for p in peers]
 
 class TransactionManager:
     def __init__(self, db_manager):
@@ -1145,6 +1248,15 @@ def api_get_asset_data(asset_id):
     asset = assets_mgr.get_asset_by_id(asset_id)
     if asset: return jsonify(asset)
     return jsonify({'error': 'Not found'}), 404
+
+# YENİ ENDPOINT: İŞLEM ALMA
+@app.route('/api/send_transaction', methods=['POST'])
+def api_send_transaction():
+    tx_data = request.get_json()
+    if tx_data:
+        blockchain_mgr.receive_transaction(tx_data)
+        return jsonify({'status': 'ok'}), 200
+    return jsonify({'error': 'no data'}), 400
 
 if __name__ == '__main__':
     def format_thousands(value):
