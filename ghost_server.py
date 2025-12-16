@@ -71,7 +71,8 @@ LANGUAGES = {
         'send_coin_title': "Para Gönder", 'recipient_address': "Alıcı Cüzdan Adresi", 'amount': "Miktar", 'send_btn': "Gönder",
         'insufficient_balance': "Yetersiz bakiye.", 'transfer_success': "Transfer başarıyla gerçekleşti.", 'recipient_not_found': "Alıcı bulunamadı.",
         'asset_name': "Varlık Adı", 'asset_type': "Tür", 'my_assets_title': "Kayıtlı Varlıklarım", 'update_btn': "Güncelle", 'edit_title': "Varlık Düzenle",
-        'content_placeholder': "İçerik (HTML/Metin)"
+        'content_placeholder': "İçerik (HTML/Metin)", 'stats_title': "Ghost İstatistikleri", 'solved_blocks': "Çözülen Bloklar",
+        'blocks_to_halving': "Yarılanmaya Kalan Blok"
     },
     'en': {
         'title': "GhostProtocol Server", 'status_online': "ONLINE", 'status_offline': "OFFLINE",
@@ -96,7 +97,8 @@ LANGUAGES = {
         'send_coin_title': "Send Coin", 'recipient_address': "Recipient Wallet Address", 'amount': "Amount", 'send_btn': "Send",
         'insufficient_balance': "Insufficient balance.", 'transfer_success': "Transfer successful.", 'recipient_not_found': "Recipient not found.",
         'asset_name': "Asset Name", 'asset_type': "Type", 'my_assets_title': "My Registered Assets", 'update_btn': "Update", 'edit_title': "Edit Asset",
-        'content_placeholder': "Content (HTML/Text)"
+        'content_placeholder': "Content (HTML/Text)", 'stats_title': "Ghost Stats", 'solved_blocks': "Solved Blocks",
+        'blocks_to_halving': "Blocks to Halving"
     },
      'ru': {
         'title': "Сервер GhostProtocol", 'status_online': "ОНЛАЙН", 'status_offline': "ОФФЛАЙН",
@@ -121,7 +123,8 @@ LANGUAGES = {
         'send_coin_title': "Отправить монеты", 'recipient_address': "Адрес кошелька получателя", 'amount': "Сумма", 'send_btn': "Отправить",
         'insufficient_balance': "Недостаточно средств на балансе.", 'transfer_success': "Перевод успешно завершен", 'recipient_not_found': "Получатель не найден.",
         'asset_name': "Название актива", 'asset_type': "Тип", 'my_assets_title': "Мои зарегистрированные активы", 'update_btn': "Обновить", 'edit_title': "Редактировать актив",
-        'content_placeholder': "Содержание (HTML/Текст)"
+        'content_placeholder': "Содержание (HTML/Текст)", 'stats_title': "Статистика Ghost", 'solved_blocks': "Решенные Блоки",
+        'blocks_to_halving': "Блоков до халвинга"
     },
     'hy': {
         'title': "GhostProtocol Սերվեր", 'status_online': "ԱՌՑԱՆՑ", 'status_offline': "ԱՆՑԱՆՑ",
@@ -146,7 +149,8 @@ LANGUAGES = {
         'send_coin_title': "Ուղարկել մետաղադրամ", 'recipient_address': "Ստացողի դրամապանակի հասցե", 'amount': "Գումար", 'send_btn': "Ուղարկել",
         'insufficient_balance': "Անբավարար մնացորդ.", 'transfer_success': "Փոխանցումը հաջողված է.", 'recipient_not_found': "Ստացողը չի գտնվել.",
         'asset_name': "Ակտիվի անվանումը", 'asset_type': "Տեսակը", 'my_assets_title': "Իմ գրանցված ակտիվները", 'update_btn': "Թարմացնել", 'edit_title': "Խմբագրել ակտիվը",
-        'content_placeholder': "Բովանդակություն (HTML/Տեքստ)"
+        'content_placeholder': "Բովանդակություն (HTML/Տեքստ)", 'stats_title': "Ghost Վիճակագրություն", 'solved_blocks': "Լուծված Բլոկներ",
+        'blocks_to_halving': "Բլոկներ մինչև կիսումը"
     }
 }
 
@@ -926,6 +930,14 @@ LOGIN_UI = r"""
             <p style="margin-top: 15px;">{{ lang['register'] }} için <a href="{{ url_for('register') }}" style="color: #ffeb3b;">tıklayın</a>.</p>
         </form>
     </div>
+    <div class="card" style="flex: 1; font-size: 0.9em; background-color: #2a2a2a;">
+        <h4 style="border-bottom: 1px solid #444; padding-bottom: 5px;">{{ lang['stats_title'] }}</h4>
+        <p><strong>{{ lang['total_supply'] }}:</strong> {{ total_supply | thousands }} GHOST</p>
+        <p><strong>{{ lang['mined_supply'] }}:</strong> {{ mined_supply | thousands }} GHOST</p>
+        <p><strong>{{ lang['remaining_supply'] }}:</strong> {{ (total_supply - mined_supply) | thousands }} GHOST</p>
+        <p><strong>{{ lang['mine_reward'] }}:</strong> {{ current_reward }} GHOST</p>
+        <p><strong>{{ lang['solved_blocks'] }}:</strong> {{ last_block.block_index }}</p>
+    </div>
 </div>
 {% endblock %}
 """
@@ -933,15 +945,25 @@ LOGIN_UI = r"""
 REGISTER_UI = r"""
 {% extends 'base.html' %}
 {% block content %}
-<div class="card login-form">
-    <h3>{{ lang['register'] }}</h3>
-    {% if error %}<div class="status-message status-error">{{ error }}</div>{% endif %}
-    <form method="POST">
-        <input type="text" name="username" placeholder="{{ lang['username'] }}" required><br>
-        <input type="password" name="password" placeholder="{{ lang['password'] }}" required><br>
-        <input type="password" name="password_confirm" placeholder="Şifre Tekrar" required><br>
-        <button class="action-button" type="submit">{{ lang['submit'] }}</button>
-    </form>
+<div style="display: flex; gap: 20px;">
+    <div class="card login-form" style="flex: 2;">
+        <h3>{{ lang['register'] }}</h3>
+        {% if error %}<div class="status-message status-error">{{ error }}</div>{% endif %}
+        <form method="POST">
+            <input type="text" name="username" placeholder="{{ lang['username'] }}" required><br>
+            <input type="password" name="password" placeholder="{{ lang['password'] }}" required><br>
+            <input type="password" name="password_confirm" placeholder="Şifre Tekrar" required><br>
+            <button class="action-button" type="submit">{{ lang['submit'] }}</button>
+        </form>
+    </div>
+    <div class="card" style="flex: 1; font-size: 0.9em; background-color: #2a2a2a;">
+        <h4 style="border-bottom: 1px solid #444; padding-bottom: 5px;">{{ lang['stats_title'] }}</h4>
+        <p><strong>{{ lang['total_supply'] }}:</strong> {{ total_supply | thousands }} GHOST</p>
+        <p><strong>{{ lang['mined_supply'] }}:</strong> {{ mined_supply | thousands }} GHOST</p>
+        <p><strong>{{ lang['remaining_supply'] }}:</strong> {{ (total_supply - mined_supply) | thousands }} GHOST</p>
+        <p><strong>{{ lang['mine_reward'] }}:</strong> {{ current_reward }} GHOST</p>
+        <p><strong>{{ lang['solved_blocks'] }}:</strong> {{ last_block.block_index }}</p>
+    </div>
 </div>
 {% endblock %}
 """
@@ -949,29 +971,39 @@ REGISTER_UI = r"""
 MINING_UI = r"""
 {% extends 'base.html' %}
 {% block content %}
-<div class="card">
-    <h3>{{ lang['mining_title'] }}</h3>
-    {% if message %} <div class="status-message status-success">{{ message | safe }}</div> {% endif %}
-    {% if error %} <div class="status-message status-error">{{ error | safe }}</div> {% endif %}
-    
-    {% if last_block %}
-    <p><strong>{{ lang['mine_last_block'] }}:</strong> Blok {{ last_block.block_index }}</p>
-    <p><strong>{{ lang['mine_difficulty'] }}:</strong> {{ difficulty }}</p>
-    <p><strong>{{ lang['mine_reward'] }}:</strong> {{ current_reward | round(4) }} GHOST</p>
-    {% endif %}
+<div style="display: flex; gap: 20px;">
+    <div class="card" style="flex: 2;">
+        <h3>{{ lang['mining_title'] }}</h3>
+        {% if message %} <div class="status-message status-success">{{ message | safe }}</div> {% endif %}
+        {% if error %} <div class="status-message status-error">{{ error | safe }}</div> {% endif %}
+        
+        {% if last_block %}
+        <p><strong>{{ lang['mine_last_block'] }}:</strong> Blok {{ last_block.block_index }}</p>
+        <p><strong>{{ lang['mine_difficulty'] }}:</strong> {{ difficulty }}</p>
+        <p><strong>{{ lang['mine_reward'] }}:</strong> {{ current_reward | round(4) }} GHOST</p>
+        {% endif %}
 
-    <hr style="border-top: 1px solid #333; margin: 10px 0;">
+        <hr style="border-top: 1px solid #333; margin: 10px 0;">
 
-    <form method="POST" action="{{ url_for('mining') }}">
-    {% if not can_mine %}
-        <div class="status-message status-error">
-            {{ lang['mine_limit_error'] }} {{ remaining_time }}
-        </div>
-        <button class="action-button" type="submit" disabled style="opacity:0.5; cursor:not-allowed;">Madencilik Başlat (Kilitli)</button>
-    {% else %}
-        <button class="action-button" type="submit">Madencilik Başlat</button>
-    {% endif %}
-    </form>
+        <form method="POST" action="{{ url_for('mining') }}">
+        {% if not can_mine %}
+            <div class="status-message status-error">
+                {{ lang['mine_limit_error'] }} {{ remaining_time }}
+            </div>
+            <button class="action-button" type="submit" disabled style="opacity:0.5; cursor:not-allowed;">Madencilik Başlat (Kilitli)</button>
+        {% else %}
+            <button class="action-button" type="submit">Madencilik Başlat</button>
+        {% endif %}
+        </form>
+    </div>
+    <div class="card" style="flex: 1; font-size: 0.9em; background-color: #2a2a2a;">
+        <h4 style="border-bottom: 1px solid #444; padding-bottom: 5px;">{{ lang['stats_title'] }}</h4>
+        <p><strong>{{ lang['total_supply'] }}:</strong> {{ total_supply | thousands }} GHOST</p>
+        <p><strong>{{ lang['mined_supply'] }}:</strong> {{ mined_supply | thousands }} GHOST</p>
+        <p><strong>{{ lang['remaining_supply'] }}:</strong> {{ (total_supply - mined_supply) | thousands }} GHOST</p>
+        <p><strong>{{ lang['solved_blocks'] }}:</strong> {{ last_block.block_index }}</p>
+        <p><strong>{{ lang['blocks_to_halving'] }}:</strong> {{ blocks_until_halving }}</p>
+    </div>
 </div>
 {% endblock %}
 """
@@ -1062,7 +1094,14 @@ def login():
         else: error = "Hatalı Kullanıcı Adı veya Şifre."
     active_peers_count = mesh_mgr.get_active_peers()
     session['active_peers_count'] = active_peers_count
-    return render_template_string(LOGIN_UI, lang=L, error=error, active_peers_count=active_peers_count)
+    
+    # İstatistikleri hesapla
+    last_block = blockchain_mgr.get_last_block()
+    mined_supply = blockchain_mgr.get_current_mined_supply()
+    current_reward = blockchain_mgr.calculate_block_reward(last_block['block_index'] + 1)
+    
+    return render_template_string(LOGIN_UI, lang=L, error=error, active_peers_count=active_peers_count,
+                                  total_supply=TOTAL_SUPPLY, mined_supply=mined_supply, current_reward=current_reward, last_block=last_block)
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -1083,7 +1122,14 @@ def register():
             return redirect(url_for('dashboard'))
         except sqlite3.IntegrityError: error = "Kullanıcı adı alınmış."
         finally: conn.close()
-    return render_template_string(REGISTER_UI, lang=L, error=error, active_peers_count=session.get('active_peers_count', 0))
+        
+    # İstatistikleri hesapla
+    last_block = blockchain_mgr.get_last_block()
+    mined_supply = blockchain_mgr.get_current_mined_supply()
+    current_reward = blockchain_mgr.calculate_block_reward(last_block['block_index'] + 1)
+    
+    return render_template_string(REGISTER_UI, lang=L, error=error, active_peers_count=session.get('active_peers_count', 0),
+                                  total_supply=TOTAL_SUPPLY, mined_supply=mined_supply, current_reward=current_reward, last_block=last_block)
 
 @app.route('/logout')
 def logout():
@@ -1195,7 +1241,14 @@ def mining():
     remaining = max(0, 86400 - (time.time() - last_mined_time))
     remaining_time = str(timedelta(seconds=int(remaining)))
     
-    return render_template_string(MINING_UI, lang=L, message=message, error=error, last_block=last_block, difficulty=difficulty, current_reward=reward, can_mine=can_mine, remaining_time=remaining_time, next_halving=0, active_peers_count=active_peers)
+    # İstatistikler
+    mined_supply = blockchain_mgr.get_current_mined_supply()
+    current_reward = blockchain_mgr.calculate_block_reward(last_block['block_index'] + 1)
+    # Yarılanmaya kalan blok sayısı
+    blocks_until_halving = HALVING_INTERVAL - (last_block['block_index'] % HALVING_INTERVAL)
+    
+    return render_template_string(MINING_UI, lang=L, message=message, error=error, last_block=last_block, difficulty=difficulty, current_reward=reward, can_mine=can_mine, remaining_time=remaining_time, next_halving=0, active_peers_count=active_peers,
+                                  total_supply=TOTAL_SUPPLY, mined_supply=mined_supply, blocks_until_halving=blocks_until_halving)
 
 @app.route('/view_asset/<asset_id>')
 def view_asset(asset_id):
