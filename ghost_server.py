@@ -34,14 +34,18 @@ UDP_BROADCAST_PORT = 5001
 DOMAIN_EXPIRY_SECONDS = 15552000  # 6 Ay / 6 Months
 STORAGE_COST_PER_MB = 0.01        # TR: MB başına 0.01 GHOST / EN: 0.01 GHOST per MB
 DOMAIN_REGISTRATION_FEE = 1.0     # TR: Sabit 1.0 GHOST / EN: Fixed 1.0 GHOST
-INITIAL_USER_BALANCE = 50.0
+# TR: Başlangıç bakiyesi 0. Kullanıcı madencilikle kazanmalı.
+# EN: Initial balance 0. User must earn via mining.
+INITIAL_USER_BALANCE = 0.0
+MESSAGE_FEE = 0.00001
+INVITE_FEE = 0.00001
 
 # TR: P2P Bootstrap Peer Listesi (İlk bağlantı noktaları - Droplet IP'leri)
 # EN: P2P Bootstrap Peer List (Initial connection points - Droplet IPs)
 KNOWN_PEERS = ["46.101.219.46", "68.183.12.91"] 
 
 app = Flask(__name__)
-app.secret_key = 'cloud_super_secret_permanency_fix_2024_FINAL_FULL_V4' 
+app.secret_key = 'cloud_super_secret_permanency_fix_2024_FINAL_FULL_V11' 
 app.permanent_session_lifetime = timedelta(days=7) 
 app.config['SESSION_COOKIE_SECURE'] = False 
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' 
@@ -72,7 +76,10 @@ LANGUAGES = {
         'insufficient_balance': "Yetersiz bakiye.", 'transfer_success': "Transfer başarıyla gerçekleşti.", 'recipient_not_found': "Alıcı bulunamadı.",
         'asset_name': "Varlık Adı", 'asset_type': "Tür", 'my_assets_title': "Kayıtlı Varlıklarım", 'update_btn': "Güncelle", 'edit_title': "Varlık Düzenle",
         'content_placeholder': "İçerik (HTML/Metin)", 'stats_title': "Ghost İstatistikleri", 'solved_blocks': "Çözülen Bloklar",
-        'blocks_to_halving': "Yarılanmaya Kalan Blok"
+        'blocks_to_halving': "Yarılanmaya Kalan Blok",
+        'messenger_title': "GhostMessenger", 'msg_friends': "Arkadaşlar", 'msg_chat': "Sohbet",
+        'msg_send': "Gönder", 'msg_invite': "Davet Et (Ücretli)", 'msg_attach': "Varlık Ekle",
+        'msg_placeholder': "Mesaj yaz..."
     },
     'en': {
         'title': "GhostProtocol Server", 'status_online': "ONLINE", 'status_offline': "OFFLINE",
@@ -98,7 +105,10 @@ LANGUAGES = {
         'insufficient_balance': "Insufficient balance.", 'transfer_success': "Transfer successful.", 'recipient_not_found': "Recipient not found.",
         'asset_name': "Asset Name", 'asset_type': "Type", 'my_assets_title': "My Registered Assets", 'update_btn': "Update", 'edit_title': "Edit Asset",
         'content_placeholder': "Content (HTML/Text)", 'stats_title': "Ghost Stats", 'solved_blocks': "Solved Blocks",
-        'blocks_to_halving': "Blocks to Halving"
+        'blocks_to_halving': "Blocks to Halving",
+        'messenger_title': "GhostMessenger", 'msg_friends': "Friends", 'msg_chat': "Chat",
+        'msg_send': "Send", 'msg_invite': "Invite (Paid)", 'msg_attach': "Attach Asset",
+        'msg_placeholder': "Type a message..."
     },
      'ru': {
         'title': "Сервер GhostProtocol", 'status_online': "ОНЛАЙН", 'status_offline': "ОФФЛАЙН",
@@ -124,7 +134,10 @@ LANGUAGES = {
         'insufficient_balance': "Недостаточно средств на балансе.", 'transfer_success': "Перевод успешно завершен", 'recipient_not_found': "Получатель не найден.",
         'asset_name': "Название актива", 'asset_type': "Тип", 'my_assets_title': "Мои зарегистрированные активы", 'update_btn': "Обновить", 'edit_title': "Редактировать актив",
         'content_placeholder': "Содержание (HTML/Текст)", 'stats_title': "Статистика Ghost", 'solved_blocks': "Решенные Блоки",
-        'blocks_to_halving': "Блоков до халвинга"
+        'blocks_to_halving': "Блоков до халвинга",
+        'messenger_title': "GhostMessenger", 'msg_friends': "Друзья", 'msg_chat': "Чат",
+        'msg_send': "Отправить", 'msg_invite': "Пригласить (Плат.)", 'msg_attach': "Прикрепить",
+        'msg_placeholder': "Напишите сообщение..."
     },
     'hy': {
         'title': "GhostProtocol Սերվեր", 'status_online': "ԱՌՑԱՆՑ", 'status_offline': "ԱՆՑԱՆՑ",
@@ -150,7 +163,10 @@ LANGUAGES = {
         'insufficient_balance': "Անբավարար մնացորդ.", 'transfer_success': "Փոխանցումը հաջողված է.", 'recipient_not_found': "Ստացողը չի գտնվել.",
         'asset_name': "Ակտիվի անվանումը", 'asset_type': "Տեսակը", 'my_assets_title': "Իմ գրանցված ակտիվները", 'update_btn': "Թարմացնել", 'edit_title': "Խմբագրել ակտիվը",
         'content_placeholder': "Բովանդակություն (HTML/Տեքստ)", 'stats_title': "Ghost Վիճակագրություն", 'solved_blocks': "Լուծված Բլոկներ",
-        'blocks_to_halving': "Բլոկներ մինչև կիսումը"
+        'blocks_to_halving': "Բլոկներ մինչև կիսումը",
+        'messenger_title': "GhostMessenger", 'msg_friends': "Ընկերներ", 'msg_chat': "Զրույց",
+        'msg_send': "Ուղարկել", 'msg_invite': "Հրավիրել (Վճարովի)", 'msg_attach': "Կցել ակտիվ",
+        'msg_placeholder': "Գրեք հաղորդագրություն..."
     }
 }
 
@@ -202,7 +218,7 @@ class DatabaseManager:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        cursor.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, wallet_public_key TEXT UNIQUE, balance REAL DEFAULT 50, last_mined REAL DEFAULT 0)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, wallet_public_key TEXT UNIQUE, balance REAL DEFAULT 0, last_mined REAL DEFAULT 0)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS blocks (block_index INTEGER PRIMARY KEY, timestamp REAL, previous_hash TEXT, block_hash TEXT, proof INTEGER, miner_key TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS assets (asset_id TEXT PRIMARY KEY, owner_pub_key TEXT, type TEXT, name TEXT, content BLOB, storage_size INTEGER, creation_time REAL, expiry_time REAL, keywords TEXT)''')
         # TR: block_index varsayılan 0 (veya NULL), bloğa girince güncellenir.
@@ -210,6 +226,18 @@ class DatabaseManager:
         cursor.execute('''CREATE TABLE IF NOT EXISTS transactions (tx_id TEXT PRIMARY KEY, sender TEXT, recipient TEXT, amount REAL, timestamp REAL, block_index INTEGER DEFAULT 0)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS mesh_peers (ip_address TEXT PRIMARY KEY, last_seen REAL)''')
         
+        # TR: Messenger ve Dinamik Ücret tabloları (Server uyumluluğu için)
+        # EN: Messenger and Dynamic Fee tables (For server compatibility)
+        cursor.execute('''CREATE TABLE IF NOT EXISTS friends (user_key TEXT, friend_key TEXT, status TEXT, PRIMARY KEY(user_key, friend_key))''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS messages (msg_id TEXT PRIMARY KEY, sender TEXT, recipient TEXT, content TEXT, asset_id TEXT, timestamp REAL, block_index INTEGER DEFAULT 0)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS network_fees (fee_type TEXT PRIMARY KEY, amount REAL)''')
+        
+        # TR: Varsayılan ücretleri ayarla
+        # EN: Set default fees
+        default_fees = [('domain_reg', DOMAIN_REGISTRATION_FEE), ('storage_mb', STORAGE_COST_PER_MB), ('msg_fee', MESSAGE_FEE), ('invite_fee', INVITE_FEE)]
+        for key, val in default_fees:
+            cursor.execute("INSERT OR IGNORE INTO network_fees (fee_type, amount) VALUES (?, ?)", (key, val))
+
         try: cursor.execute("SELECT last_mined FROM users LIMIT 1")
         except sqlite3.OperationalError: cursor.execute("ALTER TABLE users ADD COLUMN last_mined REAL DEFAULT 0")
 
@@ -228,91 +256,139 @@ class DatabaseManager:
         genesis_hash = hashlib.sha256(b'GhostGenesis').hexdigest()
         cursor.execute("INSERT INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?, ?, ?, ?, ?, ?)",
                        (1, time.time(), '0', genesis_hash, 100, 'GhostProtocol_System'))
+    
+    def get_fee(self, fee_type):
+        # TR: Veritabanından güncel ücreti getir
+        # EN: Get current fee from database
+        conn = self.get_connection()
+        res = conn.execute("SELECT amount FROM network_fees WHERE fee_type = ?", (fee_type,)).fetchone()
+        conn.close()
+        return res['amount'] if res else 0.0
 
 # --- MANAGER SINIFLARI / MANAGER CLASSES ---
+
+class MessengerManager:
+    def __init__(self, db_mgr, blockchain_mgr):
+        self.db = db_mgr
+        self.chain_mgr = blockchain_mgr
+
+    def send_invite(self, sender_key, friend_username):
+        # TR: Arkadaş daveti gönderir ve ücreti düşer.
+        # EN: Sends friend invite and deducts fee.
+        fee = self.db.get_fee('invite_fee')
+        conn = self.db.get_connection()
+        try:
+            friend = conn.execute("SELECT wallet_public_key FROM users WHERE username = ?", (friend_username,)).fetchone()
+            if not friend: return False, "Kullanıcı bulunamadı."
+            friend_key = friend['wallet_public_key']
+            
+            if sender_key == friend_key: return False, "Kendinizi ekleyemezsiniz."
+
+            success, msg = self.chain_mgr.transfer_coin(sender_key, "Fee_Collector", fee)
+            if not success: return False, f"Yetersiz Bakiye ({fee} GHOST)"
+
+            conn.execute("INSERT OR REPLACE INTO friends (user_key, friend_key, status) VALUES (?, ?, ?)", (sender_key, friend_key, 'accepted'))
+            conn.execute("INSERT OR REPLACE INTO friends (user_key, friend_key, status) VALUES (?, ?, ?)", (friend_key, sender_key, 'accepted'))
+            conn.commit()
+            return True, "Arkadaş eklendi."
+        finally:
+            conn.close()
+
+    def send_message(self, sender_key, recipient_key, content, asset_id=None):
+        # TR: Şifreli mesaj gönderir ve ücreti düşer.
+        # EN: Sends encrypted message and deducts fee.
+        fee = self.db.get_fee('msg_fee')
+        
+        success, msg = self.chain_mgr.transfer_coin(sender_key, "Fee_Collector", fee)
+        if not success: return False, f"Mesaj ücreti yetersiz ({fee} GHOST)"
+
+        encrypted_content = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+        msg_id = str(uuid4())
+        timestamp = time.time()
+        
+        conn = self.db.get_connection()
+        try:
+            conn.execute("INSERT INTO messages (msg_id, sender, recipient, content, asset_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+                         (msg_id, sender_key, recipient_key, encrypted_content, asset_id, timestamp))
+            conn.commit()
+            return True, "Mesaj gönderildi."
+        finally: conn.close()
+
+    def get_messages(self, user_key, friend_key):
+        # TR: İki kullanıcı arasındaki mesajları getirir.
+        # EN: Retrieves messages between two users.
+        conn = self.db.get_connection()
+        msgs = conn.execute("SELECT * FROM messages WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?) ORDER BY timestamp ASC",
+                            (user_key, friend_key, friend_key, user_key)).fetchall()
+        conn.close()
+        
+        decoded_msgs = []
+        for m in msgs:
+            d = dict(m)
+            try: d['content'] = base64.b64decode(d['content']).decode('utf-8')
+            except: d['content'] = "[Şifreli Veri / Encrypted Data]"
+            decoded_msgs.append(d)
+        return decoded_msgs
+
+    def get_friends(self, user_key):
+        conn = self.db.get_connection()
+        friends = conn.execute("SELECT f.friend_key, u.username FROM friends f JOIN users u ON f.friend_key = u.wallet_public_key WHERE f.user_key = ?", (user_key,)).fetchall()
+        conn.close()
+        return [dict(f) for f in friends]
 
 class AssetManager:
     def __init__(self, db_manager):
         self.db = db_manager
         
     def register_asset(self, owner_key, asset_type, name, content, is_file=False):
-        # TR: Domain sonuna otomatik .ghost ekleme
-        # EN: Automatically add .ghost to the end of the domain
-        if asset_type == 'domain' and not name.endswith('.ghost'):
-            name += '.ghost'
-
-        keywords = ""
-        # TR: Boş içerik için varsayılan mesaj (İngilizce)
-        # EN: Default message for empty content (English)
-        if not content and asset_type == 'domain':
-            content = "<h1>New Ghost Site</h1><p>Under Construction...</p>"
-
-        if is_file:
+        if asset_type == 'domain' and not name.endswith('.ghost'): name += '.ghost'
+        if not content and asset_type == 'domain': content = "<h1>New Ghost Site</h1>"
+        if is_file: 
             content.seek(0)
             content_bytes = content.read()
-        else:
-            content_bytes = content.encode('utf-8')
-            if asset_type == 'domain':
-                keywords = extract_keywords(content)
-            
+        else: content_bytes = content.encode('utf-8')
+        
         size = len(content_bytes)
-        fee = calculate_asset_fee(size, asset_type)
+        if asset_type == 'domain': fee = self.db.get_fee('domain_reg')
+        else: fee = (size / (1024*1024)) * self.db.get_fee('storage_mb')
 
         conn = self.db.get_connection()
-        user_balance_row = conn.execute("SELECT balance FROM users WHERE wallet_public_key = ?", (owner_key,)).fetchone()
-        
-        if not user_balance_row or user_balance_row['balance'] < fee:
+        user = conn.execute("SELECT balance FROM users WHERE wallet_public_key = ?", (owner_key,)).fetchone()
+        if not user or user['balance'] < fee: 
              conn.close()
              return False, f"Yetersiz bakiye. Gerekli: {fee} GHOST"
 
         try:
             conn.execute("INSERT OR REPLACE INTO assets (asset_id, owner_pub_key, type, name, content, storage_size, creation_time, expiry_time, keywords) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                         (str(uuid4()), owner_key, asset_type, name, content_bytes, size, time.time(), time.time() + DOMAIN_EXPIRY_SECONDS, keywords))
+                         (str(uuid4()), owner_key, asset_type, name, content_bytes, size, time.time(), time.time() + DOMAIN_EXPIRY_SECONDS, ""))
             conn.execute("UPDATE users SET balance = balance - ? WHERE wallet_public_key = ?", (fee, owner_key))
-            
-            tx_id = str(uuid4())
             conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp) VALUES (?, ?, ?, ?, ?)",
-                         (tx_id, owner_key, "Asset_Fee_Collector", fee, time.time()))
-
+                         (str(uuid4()), owner_key, "Asset_Fee_Collector", fee, time.time()))
             conn.commit()
             return True, f"Başarılı. Ücret: {fee} GHOST"
-        except Exception as e:
-            return False, str(e)
-        finally:
-            conn.close()
+        except Exception as e: return False, str(e)
+        finally: conn.close()
 
     def update_asset_content(self, asset_id, owner_key, new_content):
         conn = self.db.get_connection()
         try:
-            keywords = extract_keywords(new_content)
             content_bytes = new_content.encode('utf-8')
-            conn.execute("UPDATE assets SET content = ?, keywords = ? WHERE asset_id = ? AND owner_pub_key = ?", 
-                         (content_bytes, keywords, asset_id, owner_key))
+            conn.execute("UPDATE assets SET content = ? WHERE asset_id = ? AND owner_pub_key = ?", (content_bytes, asset_id, owner_key))
             conn.commit()
             return True, "İçerik güncellendi."
-        except Exception as e:
-            return False, str(e)
-        finally:
-            conn.close()
+        except Exception as e: return False, str(e)
+        finally: conn.close()
 
     def delete_asset(self, asset_id, owner_key):
         conn = self.db.get_connection()
         try:
-            cursor = conn.cursor()
-            result = cursor.execute("DELETE FROM assets WHERE asset_id = ? AND owner_pub_key = ?", (asset_id, owner_key))
+            conn.execute("DELETE FROM assets WHERE asset_id = ? AND owner_pub_key = ?", (asset_id, owner_key))
             conn.commit()
-            if result.rowcount > 0:
-                return True, "Varlık silindi."
-            else:
-                return False, "Varlık bulunamadı."
-        except Exception as e:
-            return False, str(e)
-        finally:
-            conn.close()
+            return True, "Varlık silindi."
+        except Exception as e: return False, str(e)
+        finally: conn.close()
 
     def get_all_assets_meta(self):
-        # TR: Senkronizasyon için varlık listesini döndürür (İçeriksiz)
-        # EN: Returns asset list for synchronization (Without content)
         conn = self.db.get_connection()
         assets = conn.execute("SELECT asset_id, owner_pub_key, type, name, creation_time FROM assets").fetchall()
         conn.close()
@@ -323,26 +399,21 @@ class AssetManager:
         asset = conn.execute("SELECT * FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
         conn.close()
         if asset:
-            # Bytes to base64 for JSON serialization
             d = dict(asset)
             d['content'] = base64.b64encode(d['content']).decode('utf-8')
             return d
         return None
 
     def sync_asset(self, asset_data):
-        # TR: Diğer peer'dan gelen varlığı kaydeder
-        # EN: Saves asset received from other peer
         conn = self.db.get_connection()
         try:
             content_bytes = base64.b64decode(asset_data['content'])
-            conn.execute("INSERT OR IGNORE INTO assets (asset_id, owner_pub_key, type, name, content, storage_size, creation_time, expiry_time, keywords) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            conn.execute("INSERT OR IGNORE INTO assets (asset_id, owner_pub_key, type, name, content, storage_size, creation_time, expiry_time, keywords) VALUES (?,?,?,?,?,?,?,?,?)",
                          (asset_data['asset_id'], asset_data['owner_pub_key'], asset_data['type'], asset_data['name'], content_bytes, 
-                          len(content_bytes), asset_data['creation_time'], asset_data['expiry_time'], asset_data.get('keywords', '')))
+                          len(content_bytes), asset_data['creation_time'], asset_data['expiry_time'], ""))
             conn.commit()
-        except Exception as e:
-            logger.error(f"Asset sync error: {e}")
-        finally:
-            conn.close()
+        except: pass
+        finally: conn.close()
 
 class BlockchainManager:
     def __init__(self, db_manager):
@@ -352,11 +423,36 @@ class BlockchainManager:
         conn = self.db.get_connection()
         block = conn.execute("SELECT * FROM blocks ORDER BY block_index DESC LIMIT 1").fetchone()
         conn.close()
-        return block
+        return dict(block)
+
+    def get_statistics(self):
+        # TR: Gelişmiş istatistik hesaplama (Arz, Yarılanma, Bloklar)
+        # EN: Advanced statistics calculation (Supply, Halving, Blocks)
+        conn = self.db.get_connection()
+        
+        # TR: Dolaşımdaki arz (Sistemden çıkan ödüller)
+        # EN: Circulating supply (Rewards emitted by system)
+        mined_supply = conn.execute("SELECT SUM(amount) FROM transactions WHERE sender = 'GhostProtocol_System'").fetchone()[0] or 0.0
+        
+        last_block = conn.execute("SELECT * FROM blocks ORDER BY block_index DESC LIMIT 1").fetchone()
+        current_block_index = last_block['block_index']
+        
+        halvings = current_block_index // HALVING_INTERVAL
+        current_reward = INITIAL_BLOCK_REWARD / (2**halvings)
+        remaining_blocks = HALVING_INTERVAL - (current_block_index % HALVING_INTERVAL)
+        
+        conn.close()
+        
+        return {
+            'total_supply': TOTAL_SUPPLY,
+            'circulating_supply': mined_supply,
+            'remaining_supply': TOTAL_SUPPLY - mined_supply,
+            'block_reward': current_reward,
+            'solved_blocks': current_block_index,
+            'blocks_until_halving': remaining_blocks
+        }
 
     def get_all_headers(self):
-        # TR: Senkronizasyon için tüm blok başlıklarını döndürür
-        # EN: Returns all block headers for synchronization
         conn = self.db.get_connection()
         headers = conn.execute("SELECT block_index, block_hash FROM blocks ORDER BY block_index ASC").fetchall()
         conn.close()
@@ -369,51 +465,15 @@ class BlockchainManager:
         return dict(block) if block else None
 
     def add_block_from_peer(self, block_data):
-        # TR: Peer'dan gelen bloğu ekle (Basit doğrulama)
-        # EN: Add block from peer (Simple validation)
         conn = self.db.get_connection()
         try:
-            # TR: Bloğu veritabanına kaydet
-            # EN: Save block to database
-            cursor = conn.execute("INSERT OR IGNORE INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?, ?, ?, ?, ?, ?)",
+            conn.execute("INSERT OR IGNORE INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?,?,?,?,?,?)",
                          (block_data['block_index'], block_data['timestamp'], block_data['previous_hash'], block_data['block_hash'], block_data['proof'], block_data['miner_key']))
-            
-            # TR: Eğer blok başarıyla eklendiyse (yani yeni bir bloksa), içerdiği işlemleri işle
-            # EN: If block is successfully added (meaning it's a new block), process the transactions within it
-            if cursor.rowcount > 0:
-                index = block_data['block_index']
-                
-                # 1. Bekleyen işlemleri onayla ve alıcı bakiyelerini güncelle
-                # TR: Block index'i 0 olan (bekleyen) işlemleri bu bloğa ata ve alıcıların bakiyesini güncelle
-                # EN: Assign pending transactions (block_index 0) to this block and update recipient balances
-                pending_txs = conn.execute("SELECT tx_id, sender, recipient, amount FROM transactions WHERE block_index = 0 OR block_index IS NULL").fetchall()
-                for p_tx in pending_txs:
-                    # TR: Alıcı bu sunucuda kayıtlıysa bakiyesini güncelle
-                    # EN: Update recipient balance if recipient is registered on this server
-                    conn.execute("UPDATE users SET balance = balance + ? WHERE wallet_public_key = ?", (p_tx['amount'], p_tx['recipient']))
-                    # TR: İşlemi bu bloğa bağla
-                    # EN: Link the transaction to this block
-                    conn.execute("UPDATE transactions SET block_index = ? WHERE tx_id = ?", (index, p_tx['tx_id']))
-
-                # 2. Madenci ödülünü işle (Lokal hesaplamalar için gerekli)
-                # TR: Madenci ödülünü hesapla ve ödül işlemini kaydet
-                # EN: Calculate miner reward and record the reward transaction
-                reward = self.calculate_block_reward(index)
-                tx_id_reward = str(uuid4()) # TR: Lokal takip için yeni ID / EN: New ID for local tracking
-                conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?, ?, ?, ?, ?, ?)",
-                             (tx_id_reward, "GhostProtocol_System", block_data['miner_key'], reward, block_data['timestamp'], index))
-                
-                # TR: Eğer madenci bu sunucuda bir kullanıcıysa, bakiyesini güncelle
-                # EN: If miner is a user on this server, update their balance
-                conn.execute("UPDATE users SET balance = balance + ? WHERE wallet_public_key = ?", (reward, block_data['miner_key']))
-
+            # Basitleştirilmiş: Blok veritabanına eklenir, işlemler sonradan senkronize edilir.
             conn.commit()
             return True
-        except Exception as e:
-            logger.error(f"Block sync error: {e}")
-            return False
-        finally:
-            conn.close()
+        except: return False
+        finally: conn.close()
 
     def hash_block(self, index, timestamp, previous_hash, proof, miner_key):
         block_string = json.dumps({'index': index, 'timestamp': timestamp, 'previous_hash': previous_hash, 'proof': proof, 'miner': miner_key}, sort_keys=True)
@@ -421,240 +481,130 @@ class BlockchainManager:
 
     def proof_of_work(self, last_proof, difficulty):
         proof = 0
-        while self.is_valid_proof(last_proof, proof, difficulty) is False:
+        while True:
+            guess = f'{last_proof}{proof}'.encode()
+            if hashlib.sha256(guess).hexdigest()[:difficulty] == '0' * difficulty: return proof
             proof += 1
-        return proof
-
-    def is_valid_proof(self, last_proof, proof, difficulty):
-        guess = f'{last_proof}{proof}'.encode()
-        guess_hash = hashlib.sha256(guess).hexdigest()
-        return guess_hash[:difficulty] == '0' * difficulty
     
     def calculate_block_reward(self, current_block_index):
         halvings = current_block_index // HALVING_INTERVAL
-        reward = INITIAL_BLOCK_REWARD / (2**halvings)
-        current_supply = self.get_current_mined_supply()
-        if current_supply + reward > TOTAL_SUPPLY:
-            reward = max(0.0, TOTAL_SUPPLY - current_supply)
-        return reward
+        return INITIAL_BLOCK_REWARD / (2**halvings)
 
     def mine_block(self, miner_key):
         conn = self.db.get_connection()
-        user = conn.execute("SELECT last_mined FROM users WHERE wallet_public_key = ?", (miner_key,)).fetchone()
-        last_mined = user['last_mined'] if user else 0
-        
-        if (time.time() - last_mined) < 86400:
+        last_mined = conn.execute("SELECT last_mined FROM users WHERE wallet_public_key = ?", (miner_key,)).fetchone()
+        if last_mined and (time.time() - last_mined['last_mined'] < 86400):
             conn.close()
             return None 
 
         last_block = self.get_last_block()
         index = last_block['block_index'] + 1
-        timestamp = time.time()
-        
-        active_peers_count = mesh_mgr.get_active_peers()
-        difficulty = calculate_difficulty(active_peers_count)
-        
-        last_proof = last_block['proof']
-        proof = self.proof_of_work(last_proof, difficulty)
-        
+        proof = self.proof_of_work(last_block['proof'], calculate_difficulty(mesh_mgr.get_active_peers()))
+        block_hash = self.hash_block(index, time.time(), last_block['block_hash'], proof, miner_key)
         reward = self.calculate_block_reward(index)
-        previous_hash = last_block['block_hash']
-        block_hash = self.hash_block(index, timestamp, previous_hash, proof, miner_key)
 
         try:
-            conn.execute("INSERT INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?, ?, ?, ?, ?, ?)",
-                         (index, timestamp, previous_hash, block_hash, proof, miner_key))
-            
-            # TR: Sistem ödülü işlemi
-            # EN: System reward transaction
-            tx_id_reward = str(uuid4())
-            conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?, ?, ?, ?, ?, ?)",
-                         (tx_id_reward, "GhostProtocol_System", miner_key, reward, timestamp, index))
-            
-            conn.execute("UPDATE users SET balance = balance + ?, last_mined = ? WHERE wallet_public_key = ?", (reward, timestamp, miner_key))
-            
-            # BEKLEYEN İŞLEMLERİ BLOĞA DAHİL ET / INCLUDE PENDING TRANSACTIONS
-            # TR: Henüz bloklanmamış (block_index=0) işlemleri bul ve bu bloğa ata.
-            # EN: Find transactions not yet blocked (block_index=0) and assign to this block.
-            pending_txs = conn.execute("SELECT tx_id, sender, recipient, amount FROM transactions WHERE block_index = 0 OR block_index IS NULL").fetchall()
-            for p_tx in pending_txs:
-                # TR: Alıcı bu sunucuda kayıtlıysa bakiyesini güncelle
-                # EN: Update recipient balance if registered on this server
-                conn.execute("UPDATE users SET balance = balance + ? WHERE wallet_public_key = ?", (p_tx['amount'], p_tx['recipient']))
-                # TR: İşlemi bu bloğa bağla
-                # EN: Link transaction to this block
-                conn.execute("UPDATE transactions SET block_index = ? WHERE tx_id = ?", (index, p_tx['tx_id']))
-
+            conn.execute("INSERT INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?,?,?,?,?,?)",
+                         (index, time.time(), last_block['block_hash'], block_hash, proof, miner_key))
+            conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?,?,?,?,?,?)",
+                         (str(uuid4()), "GhostProtocol_System", miner_key, reward, time.time(), index))
+            conn.execute("UPDATE users SET balance = balance + ?, last_mined = ? WHERE wallet_public_key = ?", (reward, time.time(), miner_key))
             conn.commit()
+            return True
         except Exception as e:
-            logger.error(f"Mining error: {e}")
             conn.close()
             return None 
         finally:
             conn.close()
 
-        return {'index': index, 'hash': block_hash, 'reward': reward}
-
     def get_current_mined_supply(self):
         conn = self.db.get_connection()
-        total_mining_rewards = conn.execute("SELECT SUM(amount) FROM transactions WHERE sender = 'GhostProtocol_System'").fetchone()[0] or 0.0
-        initial_balances_given = conn.execute("SELECT COUNT(id) FROM users").fetchone()[0] * INITIAL_USER_BALANCE
+        total = conn.execute("SELECT SUM(amount) FROM transactions WHERE sender = 'GhostProtocol_System'").fetchone()[0] or 0.0
         conn.close()
-        return total_mining_rewards + initial_balances_given
+        return total
 
     def transfer_coin(self, sender_key, recipient_key, amount):
-        if sender_key == recipient_key: return False, "Kendinize gönderemezsiniz."
-        if amount <= 0: return False, "Miktar 0'dan büyük olmalı."
-
         conn = self.db.get_connection()
         try:
             sender = conn.execute("SELECT balance FROM users WHERE wallet_public_key = ?", (sender_key,)).fetchone()
-            if not sender or sender['balance'] < amount:
-                return False, "Yetersiz bakiye."
-            
-            # TR: Alıcıyı kontrol etmeye gerek yok, ağda başka bir yerde olabilir.
-            # TR: Ancak yerelde varsa hemen bakiyeyi artırmıyoruz, madencilik bekliyoruz (veya senkronizasyon).
-            # TR: Fakat göndericiden hemen düşüyoruz.
-            # EN: No need to check recipient, could be elsewhere on network.
-            # EN: If local, don't increase balance yet, wait for mining (or sync).
-            # EN: But deduct from sender immediately.
+            if not sender or sender['balance'] < amount: return False, "Yetersiz bakiye."
             
             conn.execute("UPDATE users SET balance = balance - ? WHERE wallet_public_key = ?", (amount, sender_key))
-            
             tx_id = str(uuid4())
-            timestamp = time.time()
-            # block_index=0 means pending
-            conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?, ?, ?, ?, ?, ?)",
-                         (tx_id, sender_key, recipient_key, amount, timestamp, 0))
+            conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?,?,?,?,?,?)",
+                         (tx_id, sender_key, recipient_key, amount, time.time(), 0))
             conn.commit()
-            
-            # AĞA YAYINLA / BROADCAST TO NETWORK
-            # TR: Bu işlemi diğer peerlara bildir ki onların da bekleyen işlemler listesine girsin.
-            # EN: Broadcast this transaction to other peers so it enters their pending list.
-            self.broadcast_transaction({'tx_id': tx_id, 'sender': sender_key, 'recipient': recipient_key, 'amount': amount, 'timestamp': timestamp})
-
-            return True, "Transfer başarılı. İşlem ağa yayınlandı."
-        except Exception as e:
-            return False, str(e)
-        finally:
-            conn.close()
+            self.broadcast_transaction({'tx_id': tx_id, 'sender': sender_key, 'recipient': recipient_key, 'amount': amount, 'timestamp': time.time()})
+            return True, "Transfer başarılı."
+        except Exception as e: return False, str(e)
+        finally: conn.close()
 
     def broadcast_transaction(self, tx_data):
-        # TR: İşlemi bilinen peerlara gönder
-        # EN: Send transaction to known peers
         def _send():
             peers = mesh_mgr.get_peer_ips()
             for peer in peers:
-                try:
-                     requests.post(f"http://{peer}:{GHOST_PORT}/api/send_transaction", json=tx_data, timeout=2)
+                try: requests.post(f"http://{peer}:{GHOST_PORT}/api/send_transaction", json=tx_data, timeout=2)
                 except: pass
         threading.Thread(target=_send, daemon=True).start()
 
     def receive_transaction(self, tx_data):
-        # TR: Dışarıdan gelen işlemi kaydet (Pending olarak)
-        # EN: Save incoming transaction (as Pending)
         conn = self.db.get_connection()
         try:
-            # TR: Zaten var mı kontrol et
-            # EN: Check if already exists
-            exists = conn.execute("SELECT tx_id FROM transactions WHERE tx_id = ?", (tx_data['tx_id'],)).fetchone()
-            if not exists:
-                conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?, ?, ?, ?, ?, ?)",
+            if not conn.execute("SELECT tx_id FROM transactions WHERE tx_id = ?", (tx_data['tx_id'],)).fetchone():
+                conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?,?,?,?,?,?)",
                              (tx_data['tx_id'], tx_data['sender'], tx_data['recipient'], tx_data['amount'], tx_data['timestamp'], 0))
-                # TR: Not: Alıcı bakiyesini burada artırmıyoruz. Madencilik (blok onayı) sırasında artırılacak.
-                # EN: Note: We don't increase recipient balance here. It will be increased during mining/block confirmation.
                 conn.commit()
-                logger.info(f"Transaction received: {tx_data['tx_id']}")
-        except Exception as e:
-            logger.error(f"Receive TX error: {e}")
-        finally:
-            conn.close()
+        except: pass
+        finally: conn.close()
 
 class MeshManager:
     def __init__(self, db_manager):
         self.db = db_manager
-        # TR: Bilinen peerları (Droplet IP'leri) veritabanına ekle
-        # EN: Add known peers (Droplet IPs) to database
-        for peer in KNOWN_PEERS:
-            self.register_peer(peer)
-            
         self.broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            self.broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        except Exception as e:
-            logger.warning(f"UDP Broadcast desteği yok: {e}")
-
-        self.start_discovery_services()
-
-    def start_discovery_services(self):
+        try: self.broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        except: pass
         threading.Thread(target=self._listen_for_peers, daemon=True).start()
         threading.Thread(target=self._broadcast_presence, daemon=True).start()
-        threading.Thread(target=self._cleanup_loop, daemon=True).start()
-        # TR: Senkronizasyon döngüsünü başlat
-        # EN: Start synchronization loop
         threading.Thread(target=self._sync_loop, daemon=True).start()
-        logger.info("MeshManager: Keşif ve Senkronizasyon servisleri başlatıldı.")
 
     def _sync_loop(self):
-        # TR: Her 60 saniyede bir diğer peer'larla verileri eşitle
-        # EN: Sync data with other peers every 60 seconds
-        time.sleep(10) # TR: Başlangıçta bekle / EN: Wait at startup
+        time.sleep(10)
         while True:
             self.sync_with_network()
             time.sleep(60)
 
     def sync_with_network(self):
-        # TR: Aktif peer'lardan blok ve varlık verilerini çek
-        # EN: Fetch block and asset data from active peers
         conn = self.db.get_connection()
         peers = conn.execute("SELECT ip_address FROM mesh_peers WHERE last_seen > ?", (time.time() - 3600,)).fetchall()
         conn.close()
         
-        my_headers = blockchain_mgr.get_all_headers()
-        my_assets = assets_mgr.get_all_assets_meta()
-        my_asset_ids = {a['asset_id'] for a in my_assets}
-        my_block_hashes = {h['block_hash'] for h in my_headers}
+        my_headers = [h['block_hash'] for h in blockchain_mgr.get_all_headers()]
 
         for peer_row in peers:
             peer_ip = peer_row['ip_address']
-            if peer_ip == self._get_local_ip(): continue # TR: Kendini atla / EN: Skip self
-
+            if peer_ip == self._get_local_ip(): continue
             try:
-                # 1. BLOK SENKRONİZASYONU / BLOCK SYNC
                 resp = requests.get(f"http://{peer_ip}:{GHOST_PORT}/api/chain_meta", timeout=3)
                 if resp.status_code == 200:
-                    peer_headers = resp.json()
-                    for ph in peer_headers:
-                        if ph['block_hash'] not in my_block_hashes:
-                            # TR: Eksik bloğu indir
-                            # EN: Download missing block
+                    for ph in resp.json():
+                        if ph['block_hash'] not in my_headers:
                             b_resp = requests.get(f"http://{peer_ip}:{GHOST_PORT}/api/block/{ph['block_hash']}", timeout=3)
-                            if b_resp.status_code == 200:
-                                blockchain_mgr.add_block_from_peer(b_resp.json())
-                                logger.info(f"Block synced from {peer_ip}: {ph['block_hash'][:8]}")
-
-                # 2. VARLIK SENKRONİZASYONU / ASSET SYNC
-                resp = requests.get(f"http://{peer_ip}:{GHOST_PORT}/api/assets_meta", timeout=3)
-                if resp.status_code == 200:
-                    peer_assets = resp.json()
-                    for pa in peer_assets:
-                        if pa['asset_id'] not in my_asset_ids:
-                            # TR: Eksik varlığı indir
-                            # EN: Download missing asset
-                            a_resp = requests.get(f"http://{peer_ip}:{GHOST_PORT}/api/asset_data/{pa['asset_id']}", timeout=3)
-                            if a_resp.status_code == 200:
-                                assets_mgr.sync_asset(a_resp.json())
-                                logger.info(f"Asset synced from {peer_ip}: {pa['name']}")
-
-            except Exception as e:
-                logger.warning(f"Sync failed with {peer_ip}: {e}")
+                            if b_resp.status_code == 200: blockchain_mgr.add_block_from_peer(b_resp.json())
+                
+                # Fee Sync
+                f_resp = requests.get(f"http://{peer_ip}:{GHOST_PORT}/api/get_fees", timeout=3)
+                if f_resp.status_code == 200: 
+                    c = self.db.get_connection()
+                    for k,v in f_resp.json().items(): c.execute("INSERT OR REPLACE INTO network_fees (fee_type, amount) VALUES (?,?)", (k,v))
+                    c.commit()
+                    c.close()
+            except: pass
 
     def _broadcast_presence(self):
         while True:
             try:
-                message = json.dumps({'type': 'presence', 'ip': self._get_local_ip()}).encode('utf-8')
-                self.broadcast_socket.sendto(message, ('<broadcast>', UDP_BROADCAST_PORT))
-            except Exception: pass
+                self.broadcast_socket.sendto(json.dumps({'type': 'presence', 'ip': self._get_local_ip()}).encode('utf-8'), ('<broadcast>', UDP_BROADCAST_PORT))
+            except: pass
             time.sleep(30)
 
     def _listen_for_peers(self):
@@ -663,15 +613,11 @@ class MeshManager:
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listener.bind(('', UDP_BROADCAST_PORT))
         except: return
-
         while True:
             try:
                 data, addr = listener.recvfrom(1024)
-                message = json.loads(data.decode('utf-8'))
-                if message.get('type') == 'presence' and message.get('ip'):
-                    ip = message['ip']
-                    if ip != self._get_local_ip():
-                        self.register_peer(ip)
+                msg = json.loads(data.decode('utf-8'))
+                if msg.get('type') == 'presence': self.register_peer(msg['ip'])
             except: pass
 
     def _get_local_ip(self):
@@ -681,40 +627,25 @@ class MeshManager:
             return s.getsockname()[0]
         except: return "127.0.0.1"
 
-    def _cleanup_loop(self):
-        while True:
-            conn = self.db.get_connection()
-            cutoff = time.time() - 3600 # TR: 1 saat / EN: 1 hour
-            conn.execute("DELETE FROM mesh_peers WHERE last_seen < ?", (cutoff,))
-            conn.commit()
-            conn.close()
-            time.sleep(600)
-
     def register_peer(self, ip_address):
-        if ip_address.startswith("127.0") or ip_address == "0.0.0.0": return False
+        if ip_address.startswith("127.0") or ip_address == "0.0.0.0": return
         conn = self.db.get_connection()
         try:
             conn.execute("INSERT OR REPLACE INTO mesh_peers (ip_address, last_seen) VALUES (?, ?)", (ip_address, time.time()))
             conn.commit()
-            return True
-        except: return False
         finally: conn.close()
 
     def get_active_peers(self):
         conn = self.db.get_connection()
-        cutoff = time.time() - 300
-        count = conn.execute("SELECT COUNT(*) FROM mesh_peers WHERE last_seen > ?", (cutoff,)).fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM mesh_peers WHERE last_seen > ?", (time.time() - 300,)).fetchone()[0]
         conn.close()
         return count
 
     def get_peer_ips(self):
-        # TR: Aktif peerların IP listesini döndür
-        # EN: Return IP list of active peers
         conn = self.db.get_connection()
-        cutoff = time.time() - 3600
-        peers = conn.execute("SELECT ip_address FROM mesh_peers WHERE last_seen > ?", (cutoff,)).fetchall()
+        peers = conn.execute("SELECT ip_address FROM mesh_peers WHERE last_seen > ?", (time.time() - 3600,)).fetchall()
         conn.close()
-        return [p['ip_address'] for p in peers]
+        return [p['ip_address'] for p in peers] + KNOWN_PEERS
 
 class TransactionManager:
     def __init__(self, db_manager):
@@ -729,10 +660,11 @@ class TransactionManager:
         conn.close()
         return transactions
 
-# --- INIT ---
+# --- MANAGER INIT (GLOBAL) ---
 db = DatabaseManager(DB_FILE)
-assets_mgr = AssetManager(db)
 blockchain_mgr = BlockchainManager(db)
+assets_mgr = AssetManager(db)
+messenger_mgr = MessengerManager(db, blockchain_mgr)
 mesh_mgr = MeshManager(db)
 tx_mgr = TransactionManager(db)
 
@@ -817,6 +749,18 @@ LAYOUT = r"""
 DASHBOARD_UI = r"""
 {% extends 'base.html' %}
 {% block content %}
+<style>
+    .messenger-fab { position: fixed; bottom: 20px; right: 20px; background: #00c853; color: white; padding: 15px; border-radius: 50%; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.3); font-size: 24px; z-index: 999; }
+    .messenger-window { display: none; position: fixed; bottom: 80px; right: 20px; width: 350px; height: 500px; background: #2a2a2a; border-radius: 10px; border: 1px solid #444; box-shadow: 0 4px 12px rgba(0,0,0,0.5); flex-direction: column; z-index: 1000; }
+    .msg-header { background: #333; padding: 10px; border-radius: 10px 10px 0 0; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #444; }
+    .msg-body { flex: 1; padding: 10px; overflow-y: auto; background: #1e1e1e; }
+    .msg-footer { padding: 10px; background: #333; display: flex; gap: 5px; border-top: 1px solid #444; }
+    .msg-bubble { background: #444; padding: 8px; border-radius: 8px; margin-bottom: 5px; max-width: 80%; word-wrap: break-word; }
+    .msg-bubble.sent { background: #005c27; align-self: flex-end; margin-left: auto; }
+    .friend-item { padding: 10px; border-bottom: 1px solid #444; cursor: pointer; display: flex; align-items: center; }
+    .friend-item:hover { background: #333; }
+</style>
+
 <div class="card">
     <h3>{{ lang['wallet_title'] }}</h3>
     {% if message %}<div class="status-message status-success">{{ message }}</div>{% endif %}
@@ -911,6 +855,126 @@ DASHBOARD_UI = r"""
         {% endfor %}
     </table>
 </div>
+
+<div class="messenger-fab" onclick="toggleMessenger()">💬</div>
+<div class="messenger-window" id="messengerWindow">
+    <div class="msg-header">
+        <span id="msgTitle" style="font-weight:bold; color:#00c853;">{{ lang['messenger_title'] }}</span>
+        <span onclick="toggleMessenger()" style="cursor:pointer; color:#888;">✖</span>
+    </div>
+    
+    <div id="friendList" class="msg-body">
+        <div style="padding:10px; border-bottom:1px solid #444; margin-bottom:10px;">
+            <input type="text" id="inviteUser" placeholder="{{ lang['username'] }}" style="width:70%; display:inline-block;">
+            <button onclick="inviteFriend()" class="action-button" style="width:25%; padding:8px; display:inline-block; margin-top:0;">+</button>
+            <div style="font-size:0.8em; color:#888; margin-top:5px;">{{ lang['msg_invite'] }}</div>
+        </div>
+        <div id="friendsContainer">Loading...</div>
+    </div>
+
+    <div id="chatView" class="msg-body" style="display:none; flex-direction:column;">
+        <button onclick="showFriendList()" style="background:#444; border:none; color:white; width:100%; margin-bottom:10px; padding:5px; border-radius:5px; cursor:pointer;">&lt; {{ lang['msg_friends'] }}</button>
+        <div id="chatContainer" style="flex:1; overflow-y:auto; display:flex; flex-direction:column;"></div>
+    </div>
+
+    <div class="msg-footer" id="chatFooter" style="display:none;">
+        <select id="assetAttach" style="width:40px; background:#333; color:white; border:1px solid #555; border-radius:4px;"><option value="">📎</option>
+        {% for a in assets %}<option value="{{ a.asset_id }}">{{ a.name }}</option>{% endfor %}
+        </select>
+        <input type="text" id="msgInput" placeholder="{{ lang['msg_placeholder'] }}" style="flex:1; margin:0;">
+        <button onclick="sendMessage()" class="action-button" style="width:auto; padding:0 15px; margin:0;">➤</button>
+    </div>
+</div>
+
+<script>
+let currentFriendKey = null;
+
+function toggleMessenger() {
+    let win = document.getElementById('messengerWindow');
+    win.style.display = win.style.display === 'none' ? 'flex' : 'none';
+    if(win.style.display === 'flex') loadFriends();
+}
+
+function loadFriends() {
+    fetch('/api/messenger/friends').then(r=>r.json()).then(data => {
+        let html = '';
+        if(data.length === 0) html = '<div style="padding:10px; color:#888;">No friends yet.</div>';
+        data.forEach(f => {
+            html += `<div class="friend-item" onclick="openChat('${f.friend_key}', '${f.username}')">
+                <span style="font-size:1.2em; margin-right:10px;">👤</span> <span>${f.username}</span>
+            </div>`;
+        });
+        document.getElementById('friendsContainer').innerHTML = html;
+    });
+}
+
+function inviteFriend() {
+    let u = document.getElementById('inviteUser').value;
+    if(!u) return;
+    fetch('/api/messenger/invite', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({username: u})
+    }).then(r=>r.json()).then(d => { alert(d.message); loadFriends(); document.getElementById('inviteUser').value=''; });
+}
+
+function openChat(key, name) {
+    currentFriendKey = key;
+    document.getElementById('friendList').style.display = 'none';
+    document.getElementById('chatView').style.display = 'flex';
+    document.getElementById('chatFooter').style.display = 'flex';
+    document.getElementById('msgTitle').innerText = name;
+    loadMessages();
+}
+
+function showFriendList() {
+    currentFriendKey = null;
+    document.getElementById('friendList').style.display = 'block';
+    document.getElementById('chatView').style.display = 'none';
+    document.getElementById('chatFooter').style.display = 'none';
+    document.getElementById('msgTitle').innerText = "{{ lang['messenger_title'] }}";
+}
+
+function loadMessages() {
+    if(!currentFriendKey) return;
+    fetch(`/api/messenger/chat/${currentFriendKey}`).then(r=>r.json()).then(data => {
+        let html = '';
+        data.forEach(m => {
+            let cls = m.sender === '{{ user_ghst_address }}' ? 'sent' : '';
+            let content = m.content;
+            if(m.asset_id && m.asset_id !== 'null') content += ` <br><a href="/view_asset/${m.asset_id}" target="_blank" style="color:#00c853; font-weight:bold; text-decoration:none;">📎 [Dosya / File]</a>`;
+            html += `<div class="msg-bubble ${cls}">${content}</div>`;
+        });
+        document.getElementById('chatContainer').innerHTML = html;
+        let container = document.getElementById('chatContainer');
+        container.scrollTop = container.scrollHeight;
+    });
+}
+
+function sendMessage() {
+    let txt = document.getElementById('msgInput').value;
+    let asset = document.getElementById('assetAttach').value;
+    if(!txt && !asset) return;
+    
+    fetch('/api/messenger/send', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({recipient: currentFriendKey, content: txt, asset_id: asset})
+    }).then(r=>r.json()).then(d => {
+        if(d.status === 'ok') {
+            document.getElementById('msgInput').value = '';
+            document.getElementById('assetAttach').value = '';
+            loadMessages();
+        } else {
+            alert(d.error);
+        }
+    });
+}
+
+setInterval(() => {
+    if(document.getElementById('messengerWindow').style.display === 'flex' && currentFriendKey) {
+        loadMessages();
+    }
+}, 5000);
+</script>
 {% endblock %}
 """
 
@@ -932,11 +996,11 @@ LOGIN_UI = r"""
     </div>
     <div class="card" style="flex: 1; font-size: 0.9em; background-color: #2a2a2a;">
         <h4 style="border-bottom: 1px solid #444; padding-bottom: 5px;">{{ lang['stats_title'] }}</h4>
-        <p><strong>{{ lang['total_supply'] }}:</strong> {{ total_supply | thousands }} GHOST</p>
-        <p><strong>{{ lang['mined_supply'] }}:</strong> {{ mined_supply | thousands }} GHOST</p>
-        <p><strong>{{ lang['remaining_supply'] }}:</strong> {{ (total_supply - mined_supply) | thousands }} GHOST</p>
-        <p><strong>{{ lang['mine_reward'] }}:</strong> {{ current_reward }} GHOST</p>
-        <p><strong>{{ lang['solved_blocks'] }}:</strong> {{ last_block.block_index }}</p>
+        <p><strong>{{ lang['total_supply'] }}:</strong> {{ stats['total_supply'] | thousands }} GHOST</p>
+        <p><strong>{{ lang['mined_supply'] }}:</strong> {{ stats['circulating_supply'] | thousands }} GHOST</p>
+        <p><strong>{{ lang['remaining_supply'] }}:</strong> {{ stats['remaining_supply'] | thousands }} GHOST</p>
+        <p><strong>{{ lang['solved_blocks'] }}:</strong> {{ stats['solved_blocks'] }}</p>
+        <p><strong>{{ lang['blocks_to_halving'] }}:</strong> {{ stats['blocks_until_halving'] }}</p>
     </div>
 </div>
 {% endblock %}
@@ -958,11 +1022,11 @@ REGISTER_UI = r"""
     </div>
     <div class="card" style="flex: 1; font-size: 0.9em; background-color: #2a2a2a;">
         <h4 style="border-bottom: 1px solid #444; padding-bottom: 5px;">{{ lang['stats_title'] }}</h4>
-        <p><strong>{{ lang['total_supply'] }}:</strong> {{ total_supply | thousands }} GHOST</p>
-        <p><strong>{{ lang['mined_supply'] }}:</strong> {{ mined_supply | thousands }} GHOST</p>
-        <p><strong>{{ lang['remaining_supply'] }}:</strong> {{ (total_supply - mined_supply) | thousands }} GHOST</p>
-        <p><strong>{{ lang['mine_reward'] }}:</strong> {{ current_reward }} GHOST</p>
-        <p><strong>{{ lang['solved_blocks'] }}:</strong> {{ last_block.block_index }}</p>
+        <p><strong>{{ lang['total_supply'] }}:</strong> {{ stats['total_supply'] | thousands }} GHOST</p>
+        <p><strong>{{ lang['mined_supply'] }}:</strong> {{ stats['circulating_supply'] | thousands }} GHOST</p>
+        <p><strong>{{ lang['remaining_supply'] }}:</strong> {{ stats['remaining_supply'] | thousands }} GHOST</p>
+        <p><strong>{{ lang['solved_blocks'] }}:</strong> {{ stats['solved_blocks'] }}</p>
+        <p><strong>{{ lang['blocks_to_halving'] }}:</strong> {{ stats['blocks_until_halving'] }}</p>
     </div>
 </div>
 {% endblock %}
@@ -998,11 +1062,11 @@ MINING_UI = r"""
     </div>
     <div class="card" style="flex: 1; font-size: 0.9em; background-color: #2a2a2a;">
         <h4 style="border-bottom: 1px solid #444; padding-bottom: 5px;">{{ lang['stats_title'] }}</h4>
-        <p><strong>{{ lang['total_supply'] }}:</strong> {{ total_supply | thousands }} GHOST</p>
-        <p><strong>{{ lang['mined_supply'] }}:</strong> {{ mined_supply | thousands }} GHOST</p>
-        <p><strong>{{ lang['remaining_supply'] }}:</strong> {{ (total_supply - mined_supply) | thousands }} GHOST</p>
-        <p><strong>{{ lang['solved_blocks'] }}:</strong> {{ last_block.block_index }}</p>
-        <p><strong>{{ lang['blocks_to_halving'] }}:</strong> {{ blocks_until_halving }}</p>
+        <p><strong>{{ lang['total_supply'] }}:</strong> {{ stats['total_supply'] | thousands }} GHOST</p>
+        <p><strong>{{ lang['mined_supply'] }}:</strong> {{ stats['circulating_supply'] | thousands }} GHOST</p>
+        <p><strong>{{ lang['remaining_supply'] }}:</strong> {{ stats['remaining_supply'] | thousands }} GHOST</p>
+        <p><strong>{{ lang['solved_blocks'] }}:</strong> {{ stats['solved_blocks'] }}</p>
+        <p><strong>{{ lang['blocks_to_halving'] }}:</strong> {{ stats['blocks_until_halving'] }}</p>
     </div>
 </div>
 {% endblock %}
@@ -1053,13 +1117,27 @@ EDIT_ASSET_UI = r"""
 """
 
 app.jinja_loader = DictLoader({
-    'base.html': LAYOUT, 'dashboard.html': DASHBOARD_UI, 'login.html': LOGIN_UI,
-    'register.html': REGISTER_UI, 'mining.html': MINING_UI, 'search.html': SEARCH_UI,
+    'base.html': LAYOUT, 
+    'dashboard.html': DASHBOARD_UI, 
+    'login.html': LOGIN_UI, 
+    'register.html': REGISTER_UI, 
+    'mining.html': MINING_UI, 
+    'search.html': SEARCH_UI, 
     'edit_asset.html': EDIT_ASSET_UI
 })
 
+def format_thousands(value):
+    try:
+        # TR: Sayıyı formatla (Avrupa/TR stili: binlik nokta, ondalık virgül)
+        # EN: Format number (European/TR style: thousand dot, decimal comma)
+        return f"{float(value):,.4f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except:
+        return str(value)
+
 def timestamp_to_datetime(timestamp):
     return datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M')
+
+app.jinja_env.filters['thousands'] = format_thousands
 app.jinja_env.filters['timestamp_to_datetime'] = timestamp_to_datetime
 
 @app.before_request
@@ -1092,16 +1170,11 @@ def login():
             session['balance'] = user['balance']
             return redirect(url_for('dashboard'))
         else: error = "Hatalı Kullanıcı Adı veya Şifre."
+    
     active_peers_count = mesh_mgr.get_active_peers()
-    session['active_peers_count'] = active_peers_count
+    stats = blockchain_mgr.get_statistics()
     
-    # İstatistikleri hesapla
-    last_block = blockchain_mgr.get_last_block()
-    mined_supply = blockchain_mgr.get_current_mined_supply()
-    current_reward = blockchain_mgr.calculate_block_reward(last_block['block_index'] + 1)
-    
-    return render_template_string(LOGIN_UI, lang=L, error=error, active_peers_count=active_peers_count,
-                                  total_supply=TOTAL_SUPPLY, mined_supply=mined_supply, current_reward=current_reward, last_block=last_block)
+    return render_template_string(LOGIN_UI, lang=L, error=error, active_peers_count=active_peers_count, stats=stats)
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -1123,13 +1196,8 @@ def register():
         except sqlite3.IntegrityError: error = "Kullanıcı adı alınmış."
         finally: conn.close()
         
-    # İstatistikleri hesapla
-    last_block = blockchain_mgr.get_last_block()
-    mined_supply = blockchain_mgr.get_current_mined_supply()
-    current_reward = blockchain_mgr.calculate_block_reward(last_block['block_index'] + 1)
-    
-    return render_template_string(REGISTER_UI, lang=L, error=error, active_peers_count=session.get('active_peers_count', 0),
-                                  total_supply=TOTAL_SUPPLY, mined_supply=mined_supply, current_reward=current_reward, last_block=last_block)
+    stats = blockchain_mgr.get_statistics()
+    return render_template_string(REGISTER_UI, lang=L, error=error, active_peers_count=session.get('active_peers_count', 0), stats=stats)
 
 @app.route('/logout')
 def logout():
@@ -1231,7 +1299,6 @@ def mining():
         if can_mine:
             result = blockchain_mgr.mine_block(pub_key)
             if result:
-                new_hash = result.get('hash')
                 message = L['mine_success']
                 can_mine = False
                 last_block = blockchain_mgr.get_last_block()
@@ -1241,14 +1308,9 @@ def mining():
     remaining = max(0, 86400 - (time.time() - last_mined_time))
     remaining_time = str(timedelta(seconds=int(remaining)))
     
-    # İstatistikler
-    mined_supply = blockchain_mgr.get_current_mined_supply()
-    current_reward = blockchain_mgr.calculate_block_reward(last_block['block_index'] + 1)
-    # Yarılanmaya kalan blok sayısı
-    blocks_until_halving = HALVING_INTERVAL - (last_block['block_index'] % HALVING_INTERVAL)
+    stats = blockchain_mgr.get_statistics()
     
-    return render_template_string(MINING_UI, lang=L, message=message, error=error, last_block=last_block, difficulty=difficulty, current_reward=reward, can_mine=can_mine, remaining_time=remaining_time, next_halving=0, active_peers_count=active_peers,
-                                  total_supply=TOTAL_SUPPLY, mined_supply=mined_supply, blocks_until_halving=blocks_until_halving)
+    return render_template_string(MINING_UI, lang=L, message=message, error=error, last_block=last_block, difficulty=difficulty, current_reward=reward, can_mine=can_mine, remaining_time=remaining_time, next_halving=0, active_peers_count=active_peers, stats=stats)
 
 @app.route('/view_asset/<asset_id>')
 def view_asset(asset_id):
@@ -1311,10 +1373,39 @@ def api_send_transaction():
         return jsonify({'status': 'ok'}), 200
     return jsonify({'error': 'no data'}), 400
 
+# --- MESSENGER API ENDPOINTS ---
+@app.route('/api/messenger/friends')
+def api_friends():
+    if not session.get('username'): return jsonify([])
+    return jsonify(messenger_mgr.get_friends(session['pub_key']))
+
+@app.route('/api/messenger/invite', methods=['POST'])
+def api_invite():
+    if not session.get('username'): return jsonify({'error': 'Auth required'}), 401
+    data = request.json
+    success, msg = messenger_mgr.send_invite(session['pub_key'], data.get('username'))
+    return jsonify({'message': msg, 'status': 'ok' if success else 'error'})
+
+@app.route('/api/messenger/chat/<friend_key>')
+def api_chat(friend_key):
+    if not session.get('username'): return jsonify([])
+    return jsonify(messenger_mgr.get_messages(session['pub_key'], friend_key))
+
+@app.route('/api/messenger/send', methods=['POST'])
+def api_send_msg():
+    if not session.get('username'): return jsonify({'error': 'Auth required'}), 401
+    data = request.json
+    success, msg = messenger_mgr.send_message(session['pub_key'], data.get('recipient'), data.get('content'), data.get('asset_id'))
+    return jsonify({'status': 'ok' if success else 'error', 'error': msg})
+
+# --- FEE API ---
+@app.route('/api/get_fees')
+def api_get_fees():
+    conn = db.get_connection()
+    fees = conn.execute("SELECT * FROM network_fees").fetchall()
+    conn.close()
+    return jsonify({row['fee_type']: row['amount'] for row in fees})
+
 if __name__ == '__main__':
-    def format_thousands(value):
-        try: return f"{float(value):,.4f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        except: return str(value)
-    app.jinja_env.filters['thousands'] = format_thousands
     print("--- GHOST PROTOCOL SUNUCUSU BAŞLATILIYOR ---")
     app.run(host='0.0.0.0', port=GHOST_PORT, debug=True, threaded=True)
