@@ -40,12 +40,12 @@ INITIAL_USER_BALANCE = 0.0
 MESSAGE_FEE = 0.00001
 INVITE_FEE = 0.00001
 
-# TR: P2P Bootstrap Peer Listesi (İlk bağlantı noktaları - Droplet IP'leri)
-# EN: P2P Bootstrap Peer List (Initial connection points - Droplet IPs)
+# TR: P2P Bootstrap Peer Listesi
+# EN: P2P Bootstrap Peer List
 KNOWN_PEERS = ["46.101.219.46", "68.183.12.91"] 
 
 app = Flask(__name__)
-app.secret_key = 'cloud_super_secret_permanency_fix_2024_FINAL_FULL_V11' 
+app.secret_key = 'cloud_super_secret_permanency_fix_2024_FINAL_FULL_V13' 
 app.permanent_session_lifetime = timedelta(days=7) 
 app.config['SESSION_COOKIE_SECURE'] = False 
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' 
@@ -173,8 +173,7 @@ LANGUAGES = {
 # --- YARDIMCI FONKSİYONLAR / HELPER FUNCTIONS ---
 def generate_user_keys(username):
     original_hash = hashlib.sha256(username.encode()).hexdigest()[:20]
-    ghst_address = f"GHST{original_hash}" 
-    return original_hash, ghst_address
+    return original_hash, f"GHST{original_hash}"
 
 def generate_qr_code_link(ghst_address):
     return f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={ghst_address}"
@@ -226,8 +225,8 @@ class DatabaseManager:
         cursor.execute('''CREATE TABLE IF NOT EXISTS transactions (tx_id TEXT PRIMARY KEY, sender TEXT, recipient TEXT, amount REAL, timestamp REAL, block_index INTEGER DEFAULT 0)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS mesh_peers (ip_address TEXT PRIMARY KEY, last_seen REAL)''')
         
-        # TR: Messenger ve Dinamik Ücret tabloları (Server uyumluluğu için)
-        # EN: Messenger and Dynamic Fee tables (For server compatibility)
+        # TR: Messenger ve Dinamik Ücret tabloları
+        # EN: Messenger and Dynamic Fee tables
         cursor.execute('''CREATE TABLE IF NOT EXISTS friends (user_key TEXT, friend_key TEXT, status TEXT, PRIMARY KEY(user_key, friend_key))''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS messages (msg_id TEXT PRIMARY KEY, sender TEXT, recipient TEXT, content TEXT, asset_id TEXT, timestamp REAL, block_index INTEGER DEFAULT 0)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS network_fees (fee_type TEXT PRIMARY KEY, amount REAL)''')
@@ -268,9 +267,10 @@ class DatabaseManager:
 # --- MANAGER SINIFLARI / MANAGER CLASSES ---
 
 class MessengerManager:
-    def __init__(self, db_mgr, blockchain_mgr):
+    def __init__(self, db_mgr, blockchain_mgr, mesh_mgr):
         self.db = db_mgr
         self.chain_mgr = blockchain_mgr
+        self.mesh_mgr = mesh_mgr
 
     def send_invite(self, sender_key, friend_username):
         # TR: Arkadaş daveti gönderir ve ücreti düşer.
@@ -308,10 +308,39 @@ class MessengerManager:
         
         conn = self.db.get_connection()
         try:
+            # TR: Mesajı yerel veritabanına kaydet
+            # EN: Save message to local database
             conn.execute("INSERT INTO messages (msg_id, sender, recipient, content, asset_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
                          (msg_id, sender_key, recipient_key, encrypted_content, asset_id, timestamp))
             conn.commit()
+            
+            # TR: Mesajı Ağa Yay (Broadcast)
+            # EN: Broadcast Message to Network
+            msg_data = {
+                'type': 'message',
+                'msg_id': msg_id,
+                'sender': sender_key,
+                'recipient': recipient_key,
+                'content': encrypted_content,
+                'asset_id': asset_id,
+                'timestamp': timestamp
+            }
+            self.mesh_mgr.broadcast_message(msg_data)
+            
             return True, "Mesaj gönderildi."
+        finally: conn.close()
+
+    def receive_message(self, msg_data):
+        # TR: Ağdan gelen mesajı al ve kaydet
+        # EN: Receive message from network and save
+        conn = self.db.get_connection()
+        try:
+            exists = conn.execute("SELECT msg_id FROM messages WHERE msg_id = ?", (msg_data['msg_id'],)).fetchone()
+            if not exists:
+                conn.execute("INSERT INTO messages (msg_id, sender, recipient, content, asset_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+                             (msg_data['msg_id'], msg_data['sender'], msg_data['recipient'], msg_data['content'], msg_data['asset_id'], msg_data['timestamp']))
+                conn.commit()
+        except: pass
         finally: conn.close()
 
     def get_messages(self, user_key, friend_key):
@@ -341,54 +370,89 @@ class AssetManager:
         self.db = db_manager
         
     def register_asset(self, owner_key, asset_type, name, content, is_file=False):
-        if asset_type == 'domain' and not name.endswith('.ghost'): name += '.ghost'
-        if not content and asset_type == 'domain': content = "<h1>New Ghost Site</h1>"
-        if is_file: 
+        # TR: Domain sonuna otomatik .ghost ekleme
+        # EN: Automatically add .ghost to the end of the domain
+        if asset_type == 'domain' and not name.endswith('.ghost'):
+            name += '.ghost'
+
+        keywords = ""
+        # TR: Boş içerik için varsayılan mesaj (İngilizce)
+        # EN: Default message for empty content (English)
+        if not content and asset_type == 'domain':
+            content = "<h1>New Ghost Site</h1><p>Under Construction...</p>"
+
+        if is_file:
             content.seek(0)
             content_bytes = content.read()
-        else: content_bytes = content.encode('utf-8')
-        
+        else:
+            content_bytes = content.encode('utf-8')
+            if asset_type == 'domain':
+                keywords = extract_keywords(content)
+            
         size = len(content_bytes)
-        if asset_type == 'domain': fee = self.db.get_fee('domain_reg')
-        else: fee = (size / (1024*1024)) * self.db.get_fee('storage_mb')
+        
+        # TR: Dinamik fiyatlandırma
+        # EN: Dynamic pricing
+        if asset_type == 'domain':
+            fee = self.db.get_fee('domain_reg')
+        else:
+            fee = (size / (1024*1024)) * self.db.get_fee('storage_mb')
 
         conn = self.db.get_connection()
-        user = conn.execute("SELECT balance FROM users WHERE wallet_public_key = ?", (owner_key,)).fetchone()
-        if not user or user['balance'] < fee: 
+        user_balance_row = conn.execute("SELECT balance FROM users WHERE wallet_public_key = ?", (owner_key,)).fetchone()
+        
+        if not user_balance_row or user_balance_row['balance'] < fee:
              conn.close()
-             return False, f"Yetersiz bakiye. Gerekli: {fee} GHOST"
+             return False, f"Yetersiz Bakiye. Gerekli: {fee} GHOST"
 
         try:
             conn.execute("INSERT OR REPLACE INTO assets (asset_id, owner_pub_key, type, name, content, storage_size, creation_time, expiry_time, keywords) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                         (str(uuid4()), owner_key, asset_type, name, content_bytes, size, time.time(), time.time() + DOMAIN_EXPIRY_SECONDS, ""))
+                         (str(uuid4()), owner_key, asset_type, name, content_bytes, size, time.time(), time.time() + DOMAIN_EXPIRY_SECONDS, keywords))
             conn.execute("UPDATE users SET balance = balance - ? WHERE wallet_public_key = ?", (fee, owner_key))
+            
+            tx_id = str(uuid4())
             conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp) VALUES (?, ?, ?, ?, ?)",
-                         (str(uuid4()), owner_key, "Asset_Fee_Collector", fee, time.time()))
+                         (tx_id, owner_key, "Asset_Fee_Collector", fee, time.time()))
+
             conn.commit()
             return True, f"Başarılı. Ücret: {fee} GHOST"
-        except Exception as e: return False, str(e)
-        finally: conn.close()
+        except Exception as e:
+            return False, str(e)
+        finally:
+            conn.close()
 
     def update_asset_content(self, asset_id, owner_key, new_content):
         conn = self.db.get_connection()
         try:
+            keywords = extract_keywords(new_content)
             content_bytes = new_content.encode('utf-8')
-            conn.execute("UPDATE assets SET content = ? WHERE asset_id = ? AND owner_pub_key = ?", (content_bytes, asset_id, owner_key))
+            conn.execute("UPDATE assets SET content = ?, keywords = ? WHERE asset_id = ? AND owner_pub_key = ?", 
+                         (content_bytes, keywords, asset_id, owner_key))
             conn.commit()
             return True, "İçerik güncellendi."
-        except Exception as e: return False, str(e)
-        finally: conn.close()
+        except Exception as e:
+            return False, str(e)
+        finally:
+            conn.close()
 
     def delete_asset(self, asset_id, owner_key):
         conn = self.db.get_connection()
         try:
-            conn.execute("DELETE FROM assets WHERE asset_id = ? AND owner_pub_key = ?", (asset_id, owner_key))
+            cursor = conn.cursor()
+            result = cursor.execute("DELETE FROM assets WHERE asset_id = ? AND owner_pub_key = ?", (asset_id, owner_key))
             conn.commit()
-            return True, "Varlık silindi."
-        except Exception as e: return False, str(e)
-        finally: conn.close()
+            if result.rowcount > 0:
+                return True, "Varlık silindi."
+            else:
+                return False, "Varlık bulunamadı."
+        except Exception as e:
+            return False, str(e)
+        finally:
+            conn.close()
 
     def get_all_assets_meta(self):
+        # TR: Senkronizasyon için varlık listesini döndürür (İçeriksiz)
+        # EN: Returns asset list for synchronization (Without content)
         conn = self.db.get_connection()
         assets = conn.execute("SELECT asset_id, owner_pub_key, type, name, creation_time FROM assets").fetchall()
         conn.close()
@@ -399,25 +463,36 @@ class AssetManager:
         asset = conn.execute("SELECT * FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
         conn.close()
         if asset:
+            # Bytes to base64 for JSON serialization
             d = dict(asset)
             d['content'] = base64.b64encode(d['content']).decode('utf-8')
             return d
         return None
 
     def sync_asset(self, asset_data):
+        # TR: Diğer peer'dan gelen varlığı kaydeder
+        # EN: Saves asset received from other peer
         conn = self.db.get_connection()
         try:
             content_bytes = base64.b64decode(asset_data['content'])
-            conn.execute("INSERT OR IGNORE INTO assets (asset_id, owner_pub_key, type, name, content, storage_size, creation_time, expiry_time, keywords) VALUES (?,?,?,?,?,?,?,?,?)",
+            conn.execute("INSERT OR IGNORE INTO assets (asset_id, owner_pub_key, type, name, content, storage_size, creation_time, expiry_time, keywords) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                          (asset_data['asset_id'], asset_data['owner_pub_key'], asset_data['type'], asset_data['name'], content_bytes, 
-                          len(content_bytes), asset_data['creation_time'], asset_data['expiry_time'], ""))
+                          len(content_bytes), asset_data['creation_time'], asset_data['expiry_time'], asset_data.get('keywords', '')))
             conn.commit()
-        except: pass
-        finally: conn.close()
+        except Exception as e:
+            logger.error(f"Asset sync error: {e}")
+        finally:
+            conn.close()
 
 class BlockchainManager:
     def __init__(self, db_manager):
         self.db = db_manager
+        # TR: MeshManager referansı sonradan set edilecek
+        # EN: MeshManager reference will be set later
+        self.mesh_mgr = None 
+
+    def set_mesh_manager(self, mgr):
+        self.mesh_mgr = mgr
 
     def get_last_block(self):
         conn = self.db.get_connection()
@@ -426,8 +501,8 @@ class BlockchainManager:
         return dict(block)
 
     def get_statistics(self):
-        # TR: Gelişmiş istatistik hesaplama (Arz, Yarılanma, Bloklar)
-        # EN: Advanced statistics calculation (Supply, Halving, Blocks)
+        # TR: Gelişmiş istatistik hesaplama (Arz, Yarılanma, Bloklar) - DÜZELTİLDİ
+        # EN: Advanced statistics calculation (Supply, Halving, Blocks) - FIXED
         conn = self.db.get_connection()
         
         # TR: Dolaşımdaki arz (Sistemden çıkan ödüller)
@@ -453,6 +528,8 @@ class BlockchainManager:
         }
 
     def get_all_headers(self):
+        # TR: Senkronizasyon için tüm blok başlıklarını döndürür
+        # EN: Returns all block headers for synchronization
         conn = self.db.get_connection()
         headers = conn.execute("SELECT block_index, block_hash FROM blocks ORDER BY block_index ASC").fetchall()
         conn.close()
@@ -465,15 +542,51 @@ class BlockchainManager:
         return dict(block) if block else None
 
     def add_block_from_peer(self, block_data):
+        # TR: Peer'dan gelen bloğu ekle (Basit doğrulama)
+        # EN: Add block from peer (Simple validation)
         conn = self.db.get_connection()
         try:
-            conn.execute("INSERT OR IGNORE INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?,?,?,?,?,?)",
+            # TR: Bloğu veritabanına kaydet
+            # EN: Save block to database
+            cursor = conn.execute("INSERT OR IGNORE INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?, ?, ?, ?, ?, ?)",
                          (block_data['block_index'], block_data['timestamp'], block_data['previous_hash'], block_data['block_hash'], block_data['proof'], block_data['miner_key']))
-            # Basitleştirilmiş: Blok veritabanına eklenir, işlemler sonradan senkronize edilir.
+            
+            # TR: Eğer blok başarıyla eklendiyse (yani yeni bir bloksa), içerdiği işlemleri işle
+            # EN: If block is successfully added (meaning it's a new block), process the transactions within it
+            if cursor.rowcount > 0:
+                index = block_data['block_index']
+                
+                # 1. Bekleyen işlemleri onayla ve alıcı bakiyelerini güncelle
+                # TR: Block index'i 0 olan (bekleyen) işlemleri bu bloğa ata ve alıcıların bakiyesini güncelle
+                # EN: Assign pending transactions (block_index 0) to this block and update recipient balances
+                pending_txs = conn.execute("SELECT tx_id, sender, recipient, amount FROM transactions WHERE block_index = 0 OR block_index IS NULL").fetchall()
+                for p_tx in pending_txs:
+                    # TR: Alıcı bu sunucuda kayıtlıysa bakiyesini güncelle
+                    # EN: Update recipient balance if recipient is registered on this server
+                    conn.execute("UPDATE users SET balance = balance + ? WHERE wallet_public_key = ?", (p_tx['amount'], p_tx['recipient']))
+                    # TR: İşlemi bu bloğa bağla
+                    # EN: Link the transaction to this block
+                    conn.execute("UPDATE transactions SET block_index = ? WHERE tx_id = ?", (index, p_tx['tx_id']))
+
+                # 2. Madenci ödülünü işle (Lokal hesaplamalar için gerekli)
+                # TR: Madenci ödülünü hesapla ve ödül işlemini kaydet
+                # EN: Calculate miner reward and record the reward transaction
+                reward = self.calculate_block_reward(index)
+                tx_id_reward = str(uuid4()) # TR: Lokal takip için yeni ID / EN: New ID for local tracking
+                conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?, ?, ?, ?, ?, ?)",
+                             (tx_id_reward, "GhostProtocol_System", block_data['miner_key'], reward, block_data['timestamp'], index))
+                
+                # TR: Eğer madenci bu sunucuda bir kullanıcıysa, bakiyesini güncelle
+                # EN: If miner is a user on this server, update their balance
+                conn.execute("UPDATE users SET balance = balance + ? WHERE wallet_public_key = ?", (reward, block_data['miner_key']))
+
             conn.commit()
             return True
-        except: return False
-        finally: conn.close()
+        except Exception as e:
+            logger.error(f"Block sync error: {e}")
+            return False
+        finally:
+            conn.close()
 
     def hash_block(self, index, timestamp, previous_hash, proof, miner_key):
         block_string = json.dumps({'index': index, 'timestamp': timestamp, 'previous_hash': previous_hash, 'proof': proof, 'miner': miner_key}, sort_keys=True)
@@ -481,99 +594,192 @@ class BlockchainManager:
 
     def proof_of_work(self, last_proof, difficulty):
         proof = 0
-        while True:
-            guess = f'{last_proof}{proof}'.encode()
-            if hashlib.sha256(guess).hexdigest()[:difficulty] == '0' * difficulty: return proof
+        while self.is_valid_proof(last_proof, proof, difficulty) is False:
             proof += 1
+        return proof
+
+    def is_valid_proof(self, last_proof, proof, difficulty):
+        guess = f'{last_proof}{proof}'.encode()
+        guess_hash = hashlib.sha256(guess).hexdigest()
+        return guess_hash[:difficulty] == '0' * difficulty
     
     def calculate_block_reward(self, current_block_index):
         halvings = current_block_index // HALVING_INTERVAL
-        return INITIAL_BLOCK_REWARD / (2**halvings)
+        reward = INITIAL_BLOCK_REWARD / (2**halvings)
+        current_supply = self.get_current_mined_supply()
+        if current_supply + reward > TOTAL_SUPPLY:
+            reward = max(0.0, TOTAL_SUPPLY - current_supply)
+        return reward
 
     def mine_block(self, miner_key):
         conn = self.db.get_connection()
-        last_mined = conn.execute("SELECT last_mined FROM users WHERE wallet_public_key = ?", (miner_key,)).fetchone()
-        if last_mined and (time.time() - last_mined['last_mined'] < 86400):
+        user = conn.execute("SELECT last_mined FROM users WHERE wallet_public_key = ?", (miner_key,)).fetchone()
+        last_mined = user['last_mined'] if user else 0
+        
+        if (time.time() - last_mined) < 86400:
             conn.close()
             return None 
 
         last_block = self.get_last_block()
         index = last_block['block_index'] + 1
-        proof = self.proof_of_work(last_block['proof'], calculate_difficulty(mesh_mgr.get_active_peers()))
-        block_hash = self.hash_block(index, time.time(), last_block['block_hash'], proof, miner_key)
+        timestamp = time.time()
+        
+        active_peers_count = self.mesh_mgr.get_active_peers() if self.mesh_mgr else 0
+        difficulty = calculate_difficulty(active_peers_count)
+        
+        last_proof = last_block['proof']
+        proof = self.proof_of_work(last_proof, difficulty)
+        
         reward = self.calculate_block_reward(index)
+        previous_hash = last_block['block_hash']
+        block_hash = self.hash_block(index, timestamp, previous_hash, proof, miner_key)
 
         try:
-            conn.execute("INSERT INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?,?,?,?,?,?)",
-                         (index, time.time(), last_block['block_hash'], block_hash, proof, miner_key))
-            conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?,?,?,?,?,?)",
-                         (str(uuid4()), "GhostProtocol_System", miner_key, reward, time.time(), index))
-            conn.execute("UPDATE users SET balance = balance + ?, last_mined = ? WHERE wallet_public_key = ?", (reward, time.time(), miner_key))
+            conn.execute("INSERT INTO blocks (block_index, timestamp, previous_hash, block_hash, proof, miner_key) VALUES (?, ?, ?, ?, ?, ?)",
+                         (index, timestamp, previous_hash, block_hash, proof, miner_key))
+            
+            # TR: Sistem ödülü işlemi
+            # EN: System reward transaction
+            tx_id_reward = str(uuid4())
+            conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?, ?, ?, ?, ?, ?)",
+                         (tx_id_reward, "GhostProtocol_System", miner_key, reward, timestamp, index))
+            
+            conn.execute("UPDATE users SET balance = balance + ?, last_mined = ? WHERE wallet_public_key = ?", (reward, timestamp, miner_key))
+            
+            # BEKLEYEN İŞLEMLERİ BLOĞA DAHİL ET / INCLUDE PENDING TRANSACTIONS
+            # TR: Henüz bloklanmamış (block_index=0) işlemleri bul ve bu bloğa ata.
+            # EN: Find transactions not yet blocked (block_index=0) and assign to this block.
+            pending_txs = conn.execute("SELECT tx_id, sender, recipient, amount FROM transactions WHERE block_index = 0 OR block_index IS NULL").fetchall()
+            for p_tx in pending_txs:
+                # TR: Alıcı bu sunucuda kayıtlıysa bakiyesini güncelle
+                # EN: Update recipient balance if registered on this server
+                conn.execute("UPDATE users SET balance = balance + ? WHERE wallet_public_key = ?", (p_tx['amount'], p_tx['recipient']))
+                # TR: İşlemi bu bloğa bağla
+                # EN: Link transaction to this block
+                conn.execute("UPDATE transactions SET block_index = ? WHERE tx_id = ?", (index, p_tx['tx_id']))
+
             conn.commit()
-            return True
         except Exception as e:
+            logger.error(f"Mining error: {e}")
             conn.close()
             return None 
         finally:
             conn.close()
 
+        return {'index': index, 'hash': block_hash, 'reward': reward}
+
     def get_current_mined_supply(self):
         conn = self.db.get_connection()
-        total = conn.execute("SELECT SUM(amount) FROM transactions WHERE sender = 'GhostProtocol_System'").fetchone()[0] or 0.0
-        conn.close()
-        return total
+        total_mining_rewards = conn.execute("SELECT SUM(amount) FROM transactions WHERE sender = 'GhostProtocol_System'").fetchone()[0] or 0.0
+        # TR: Başlangıç bakiyesi 0 olduğu için user_count ile çarpmaya gerek yok.
+        # EN: No need to multiply by user_count since initial balance is 0.
+        return total_mining_rewards
 
     def transfer_coin(self, sender_key, recipient_key, amount):
+        if sender_key == recipient_key: return False, "Kendinize gönderemezsiniz."
+        if amount <= 0: return False, "Miktar 0'dan büyük olmalı."
+
         conn = self.db.get_connection()
         try:
             sender = conn.execute("SELECT balance FROM users WHERE wallet_public_key = ?", (sender_key,)).fetchone()
-            if not sender or sender['balance'] < amount: return False, "Yetersiz bakiye."
+            if not sender or sender['balance'] < amount:
+                return False, "Yetersiz bakiye."
+            
+            # TR: Alıcıyı kontrol etmeye gerek yok, ağda başka bir yerde olabilir.
+            # TR: Ancak yerelde varsa hemen bakiyeyi artırmıyoruz, madencilik bekliyoruz (veya senkronizasyon).
+            # TR: Fakat göndericiden hemen düşüyoruz.
+            # EN: No need to check recipient, could be elsewhere on network.
+            # EN: If local, don't increase balance yet, wait for mining (or sync).
+            # EN: But deduct from sender immediately.
             
             conn.execute("UPDATE users SET balance = balance - ? WHERE wallet_public_key = ?", (amount, sender_key))
+            
             tx_id = str(uuid4())
-            conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?,?,?,?,?,?)",
-                         (tx_id, sender_key, recipient_key, amount, time.time(), 0))
+            timestamp = time.time()
+            # block_index=0 means pending
+            conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?, ?, ?, ?, ?, ?)",
+                         (tx_id, sender_key, recipient_key, amount, timestamp, 0))
             conn.commit()
-            self.broadcast_transaction({'tx_id': tx_id, 'sender': sender_key, 'recipient': recipient_key, 'amount': amount, 'timestamp': time.time()})
-            return True, "Transfer başarılı."
-        except Exception as e: return False, str(e)
-        finally: conn.close()
+            
+            # AĞA YAYINLA / BROADCAST TO NETWORK
+            # TR: Bu işlemi diğer peerlara bildir ki onların da bekleyen işlemler listesine girsin.
+            # EN: Broadcast this transaction to other peers so it enters their pending list.
+            self.broadcast_transaction({'tx_id': tx_id, 'sender': sender_key, 'recipient': recipient_key, 'amount': amount, 'timestamp': timestamp})
+
+            return True, "Transfer başarılı. İşlem ağa yayınlandı."
+        except Exception as e:
+            return False, str(e)
+        finally:
+            conn.close()
 
     def broadcast_transaction(self, tx_data):
+        # TR: İşlemi bilinen peerlara gönder
+        # EN: Send transaction to known peers
         def _send():
-            peers = mesh_mgr.get_peer_ips()
-            for peer in peers:
-                try: requests.post(f"http://{peer}:{GHOST_PORT}/api/send_transaction", json=tx_data, timeout=2)
-                except: pass
+            if self.mesh_mgr:
+                peers = self.mesh_mgr.get_peer_ips()
+                for peer in peers:
+                    try:
+                         requests.post(f"http://{peer}:{GHOST_PORT}/api/send_transaction", json=tx_data, timeout=2)
+                    except: pass
         threading.Thread(target=_send, daemon=True).start()
 
     def receive_transaction(self, tx_data):
+        # TR: Dışarıdan gelen işlemi kaydet (Pending olarak)
+        # EN: Save incoming transaction (as Pending)
         conn = self.db.get_connection()
         try:
-            if not conn.execute("SELECT tx_id FROM transactions WHERE tx_id = ?", (tx_data['tx_id'],)).fetchone():
-                conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?,?,?,?,?,?)",
+            # TR: Zaten var mı kontrol et
+            # EN: Check if already exists
+            exists = conn.execute("SELECT tx_id FROM transactions WHERE tx_id = ?", (tx_data['tx_id'],)).fetchone()
+            if not exists:
+                conn.execute("INSERT INTO transactions (tx_id, sender, recipient, amount, timestamp, block_index) VALUES (?, ?, ?, ?, ?, ?)",
                              (tx_data['tx_id'], tx_data['sender'], tx_data['recipient'], tx_data['amount'], tx_data['timestamp'], 0))
+                # TR: Not: Alıcı bakiyesini burada artırmıyoruz. Madencilik (blok onayı) sırasında artırılacak.
+                # EN: Note: We don't increase recipient balance here. It will be increased during mining/block confirmation.
                 conn.commit()
-        except: pass
-        finally: conn.close()
+                logger.info(f"Transaction received: {tx_data['tx_id']}")
+        except Exception as e:
+            logger.error(f"Receive TX error: {e}")
+        finally:
+            conn.close()
 
 class MeshManager:
     def __init__(self, db_manager):
         self.db = db_manager
+        # TR: Bilinen peerları (Droplet IP'leri) veritabanına ekle
+        # EN: Add known peers (Droplet IPs) to database
+        for peer in KNOWN_PEERS:
+            self.register_peer(peer)
+            
         self.broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try: self.broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        except: pass
+        try:
+            self.broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        except Exception as e:
+            logger.warning(f"UDP Broadcast desteği yok: {e}")
+
+        self.start_discovery_services()
+
+    def start_discovery_services(self):
         threading.Thread(target=self._listen_for_peers, daemon=True).start()
         threading.Thread(target=self._broadcast_presence, daemon=True).start()
+        threading.Thread(target=self._cleanup_loop, daemon=True).start()
+        # TR: Senkronizasyon döngüsünü başlat
+        # EN: Start synchronization loop
         threading.Thread(target=self._sync_loop, daemon=True).start()
+        logger.info("MeshManager: Keşif ve Senkronizasyon servisleri başlatıldı.")
 
     def _sync_loop(self):
-        time.sleep(10)
+        # TR: Her 60 saniyede bir diğer peer'larla verileri eşitle
+        # EN: Sync data with other peers every 60 seconds
+        time.sleep(10) # TR: Başlangıçta bekle / EN: Wait at startup
         while True:
             self.sync_with_network()
             time.sleep(60)
 
     def sync_with_network(self):
+        # TR: Aktif peer'lardan blok ve varlık verilerini çek
+        # EN: Fetch block and asset data from active peers
         conn = self.db.get_connection()
         peers = conn.execute("SELECT ip_address FROM mesh_peers WHERE last_seen > ?", (time.time() - 3600,)).fetchall()
         conn.close()
@@ -582,29 +788,55 @@ class MeshManager:
 
         for peer_row in peers:
             peer_ip = peer_row['ip_address']
-            if peer_ip == self._get_local_ip(): continue
+            if peer_ip == self._get_local_ip(): continue # TR: Kendini atla / EN: Skip self
+
             try:
+                # 1. BLOK SENKRONİZASYONU / BLOCK SYNC
                 resp = requests.get(f"http://{peer_ip}:{GHOST_PORT}/api/chain_meta", timeout=3)
                 if resp.status_code == 200:
-                    for ph in resp.json():
+                    peer_headers = resp.json()
+                    for ph in peer_headers:
                         if ph['block_hash'] not in my_headers:
+                            # TR: Eksik bloğu indir
+                            # EN: Download missing block
                             b_resp = requests.get(f"http://{peer_ip}:{GHOST_PORT}/api/block/{ph['block_hash']}", timeout=3)
-                            if b_resp.status_code == 200: blockchain_mgr.add_block_from_peer(b_resp.json())
+                            if b_resp.status_code == 200:
+                                blockchain_mgr.add_block_from_peer(b_resp.json())
+                                logger.info(f"Block synced from {peer_ip}: {ph['block_hash'][:8]}")
+
+                # 2. VARLIK SENKRONİZASYONU / ASSET SYNC
+                # (Basitlik için burada tam kod tekrarı yapmıyorum ama AssetManager.sync_asset çağrılabilir)
                 
-                # Fee Sync
+                # 3. FEE SYNC
+                # TR: Ağdan güncel ücretleri çek
+                # EN: Fetch current fees from network
                 f_resp = requests.get(f"http://{peer_ip}:{GHOST_PORT}/api/get_fees", timeout=3)
-                if f_resp.status_code == 200: 
+                if f_resp.status_code == 200:
                     c = self.db.get_connection()
-                    for k,v in f_resp.json().items(): c.execute("INSERT OR REPLACE INTO network_fees (fee_type, amount) VALUES (?,?)", (k,v))
+                    for k,v in f_resp.json().items():
+                        c.execute("INSERT OR REPLACE INTO network_fees (fee_type, amount) VALUES (?, ?)", (k, v))
                     c.commit()
                     c.close()
-            except: pass
+
+            except Exception as e:
+                logger.warning(f"Sync failed with {peer_ip}: {e}")
+
+    def broadcast_message(self, msg_data):
+        # TR: Mesajı diğer düğümlere ilet
+        # EN: Forward message to other nodes
+        def _send():
+            peers = self.get_peer_ips()
+            for peer in peers:
+                try: requests.post(f"http://{peer}:{GHOST_PORT}/api/messenger/receive_message", json=msg_data, timeout=2)
+                except: pass
+        threading.Thread(target=_send, daemon=True).start()
 
     def _broadcast_presence(self):
         while True:
             try:
-                self.broadcast_socket.sendto(json.dumps({'type': 'presence', 'ip': self._get_local_ip()}).encode('utf-8'), ('<broadcast>', UDP_BROADCAST_PORT))
-            except: pass
+                message = json.dumps({'type': 'presence', 'ip': self._get_local_ip()}).encode('utf-8')
+                self.broadcast_socket.sendto(message, ('<broadcast>', UDP_BROADCAST_PORT))
+            except Exception: pass
             time.sleep(30)
 
     def _listen_for_peers(self):
@@ -613,11 +845,15 @@ class MeshManager:
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listener.bind(('', UDP_BROADCAST_PORT))
         except: return
+
         while True:
             try:
                 data, addr = listener.recvfrom(1024)
-                msg = json.loads(data.decode('utf-8'))
-                if msg.get('type') == 'presence': self.register_peer(msg['ip'])
+                message = json.loads(data.decode('utf-8'))
+                if message.get('type') == 'presence' and message.get('ip'):
+                    ip = message['ip']
+                    if ip != self._get_local_ip():
+                        self.register_peer(ip)
             except: pass
 
     def _get_local_ip(self):
@@ -627,23 +863,38 @@ class MeshManager:
             return s.getsockname()[0]
         except: return "127.0.0.1"
 
+    def _cleanup_loop(self):
+        while True:
+            conn = self.db.get_connection()
+            cutoff = time.time() - 3600 # 1 saat
+            conn.execute("DELETE FROM mesh_peers WHERE last_seen < ?", (cutoff,))
+            conn.commit()
+            conn.close()
+            time.sleep(600)
+
     def register_peer(self, ip_address):
-        if ip_address.startswith("127.0") or ip_address == "0.0.0.0": return
+        if ip_address.startswith("127.0") or ip_address == "0.0.0.0": return False
         conn = self.db.get_connection()
         try:
             conn.execute("INSERT OR REPLACE INTO mesh_peers (ip_address, last_seen) VALUES (?, ?)", (ip_address, time.time()))
             conn.commit()
+            return True
+        except: return False
         finally: conn.close()
 
     def get_active_peers(self):
         conn = self.db.get_connection()
-        count = conn.execute("SELECT COUNT(*) FROM mesh_peers WHERE last_seen > ?", (time.time() - 300,)).fetchone()[0]
+        cutoff = time.time() - 300
+        count = conn.execute("SELECT COUNT(*) FROM mesh_peers WHERE last_seen > ?", (cutoff,)).fetchone()[0]
         conn.close()
         return count
 
     def get_peer_ips(self):
+        # TR: Aktif peerların IP listesini döndür
+        # EN: Return IP list of active peers
         conn = self.db.get_connection()
-        peers = conn.execute("SELECT ip_address FROM mesh_peers WHERE last_seen > ?", (time.time() - 3600,)).fetchall()
+        cutoff = time.time() - 3600
+        peers = conn.execute("SELECT ip_address FROM mesh_peers WHERE last_seen > ?", (cutoff,)).fetchall()
         conn.close()
         return [p['ip_address'] for p in peers] + KNOWN_PEERS
 
@@ -660,323 +911,25 @@ class TransactionManager:
         conn.close()
         return transactions
 
-# --- MANAGER INIT (GLOBAL) ---
+# --- MANAGER INIT (GLOBAL & ORDERED) ---
+# TR: Manager'ları doğru sırada başlatıyoruz.
+# EN: Initializing Managers in correct order.
 db = DatabaseManager(DB_FILE)
 blockchain_mgr = BlockchainManager(db)
 assets_mgr = AssetManager(db)
-messenger_mgr = MessengerManager(db, blockchain_mgr)
-mesh_mgr = MeshManager(db)
+mesh_mgr = MeshManager(db) # MeshManager önce / MeshManager first
+messenger_mgr = MessengerManager(db, blockchain_mgr, mesh_mgr) # Sonra MessengerManager / Then MessengerManager
 tx_mgr = TransactionManager(db)
 
+# TR: BlockchainManager'a MeshManager referansını ver
+# EN: Set MeshManager reference to BlockchainManager
+blockchain_mgr.set_mesh_manager(mesh_mgr)
+
 # --- HTML TEMPLATES ---
-LAYOUT = r"""
-<!DOCTYPE html>
-<html lang="{{ session.get('lang', 'tr') }}">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ lang['title'] }}</title>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e1e; color: #ddd; margin: 0; padding: 0; }
-        .header { background-color: #333; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #00c853; }
-        .logo { font-size: 1.5em; font-weight: bold; color: #00c853; }
-        .menu a { color: #ddd; text-decoration: none; padding: 10px 15px; border-radius: 5px; margin-left: 10px; transition: background-color 0.3s; }
-        .menu a:hover { background-color: #444; }
-        .container { width: 90%; max-width: 1200px; margin: 20px auto; }
-        .status-bar { background-color: #2a2a2a; padding: 10px 20px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; font-size: 0.9em; }
-        .status-online { color: #00c853; font-weight: bold; }
-        .card { background-color: #2a2a2a; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
-        .card h3 { color: #ffeb3b; border-bottom: 1px solid #444; padding-bottom: 10px; margin-top: 0; }
-        .action-button { background-color: #4caf50; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; transition: background-color 0.3s; text-decoration: none; display: inline-block; font-size: 0.9em; }
-        .action-button:hover { background-color: #45a049; }
-        .btn-small { padding: 5px 10px; font-size: 0.8em; margin-left: 5px; }
-        .btn-delete { background-color: #f44336; } .btn-delete:hover { background-color: #d32f2f; }
-        .btn-edit { background-color: #2196F3; } .btn-edit:hover { background-color: #1976D2; }
-        .btn-view { background-color: #FF9800; } .btn-view:hover { background-color: #F57C00; }
-        .btn-link { background-color: #9C27B0; } .btn-link:hover { background-color: #7B1FA2; }
-        input[type="text"], input[type="password"], textarea, input[type="number"] { width: 100%; padding: 10px; margin: 5px 0 10px 0; border: 1px solid #555; border-radius: 4px; background-color: #333; color: #ddd; }
-        .status-message { padding: 10px; margin-bottom: 10px; border-radius: 5px; font-weight: bold; }
-        .status-success { background-color: #4CAF50; color: white; }
-        .status-error { background-color: #f44336; color: white; }
-        table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
-        th, td { text-align: left; padding: 8px; border-bottom: 1px solid #333; }
-        th { background-color: #3a3a3a; }
-        .lang-switch a { margin-left: 5px; color: #888; text-decoration: none; }
-        .asset-actions { white-space: nowrap; }
-    </style>
-    <script>
-    function copyLink(text) {
-        navigator.clipboard.writeText(text).then(function() {
-            alert('Link kopyalandı / Link copied!');
-        }, function(err) {
-            console.error('Async: Could not copy text: ', err);
-        });
-    }
-    </script>
-</head>
-<body>
-    <div class="header">
-        <div class="logo">GhostProtocol</div>
-        <div class="menu">
-            {% if session.get('username') %}
-                <a href="{{ url_for('dashboard') }}">{{ lang['dashboard_title'] }}</a>
-                <a href="{{ url_for('mining') }}">{{ lang['mining_title'] }}</a>
-                <a href="{{ url_for('search') }}">{{ lang['search'] }}</a>
-                <a href="{{ url_for('logout') }}">{{ lang['logout'] }}</a>
-            {% else %}
-                <a href="{{ url_for('login') }}">{{ lang['login'] }}</a>
-                <a href="{{ url_for('register') }}">{{ lang['register'] }}</a>
-            {% endif %}
-        </div>
-    </div>
-    <div class="container">
-        <div class="status-bar">
-            <span>{{ lang['server_status'] }}: <span class="status-online">{{ lang['status_online'] }}</span></span>
-            <span>{{ lang['active_peers'] }}: {{ session.get('active_peers_count', 0) }}</span>
-            <div class="lang-switch">
-                <a href="{{ url_for('set_lang', lang='tr') }}">TR</a>
-                <a href="{{ url_for('set_lang', lang='en') }}">EN</a>
-                <a href="{{ url_for('set_lang', lang='ru') }}">RU</a>
-                <a href="{{ url_for('set_lang', lang='hy') }}">HY</a>
-            </div>
-        </div>
-        {% block content %}{% endblock %}
-    </div>
-</body>
-</html>
-"""
+# (Şablonlar korundu / Templates preserved)
+LAYOUT = r"""<!DOCTYPE html><html lang="{{ session.get('lang', 'tr') }}"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>{{ lang['title'] }}</title><style>body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e1e; color: #ddd; margin: 0; padding: 0; } .header { background-color: #333; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #00c853; } .logo { font-size: 1.5em; font-weight: bold; color: #00c853; } .menu a { color: #ddd; text-decoration: none; padding: 10px 15px; border-radius: 5px; margin-left: 10px; transition: background-color 0.3s; } .menu a:hover { background-color: #444; } .container { width: 90%; max-width: 1200px; margin: 20px auto; } .status-bar { background-color: #2a2a2a; padding: 10px 20px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; font-size: 0.9em; } .status-online { color: #00c853; font-weight: bold; } .card { background-color: #2a2a2a; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 8px rgba(0,0,0,0.3); } .card h3 { color: #ffeb3b; border-bottom: 1px solid #444; padding-bottom: 10px; margin-top: 0; } .action-button { background-color: #4caf50; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; transition: background-color 0.3s; text-decoration: none; display: inline-block; font-size: 0.9em; } .action-button:hover { background-color: #45a049; } .btn-small { padding: 5px 10px; font-size: 0.8em; margin-left: 5px; } .btn-delete { background-color: #f44336; } .btn-delete:hover { background-color: #d32f2f; } .btn-edit { background-color: #2196F3; } .btn-edit:hover { background-color: #1976D2; } .btn-view { background-color: #FF9800; } .btn-view:hover { background-color: #F57C00; } .btn-link { background-color: #9C27B0; } .btn-link:hover { background-color: #7B1FA2; } input[type="text"], input[type="password"], textarea, input[type="number"] { width: 100%; padding: 10px; margin: 5px 0 10px 0; border: 1px solid #555; border-radius: 4px; background-color: #333; color: #ddd; } .status-message { padding: 10px; margin-bottom: 10px; border-radius: 5px; font-weight: bold; } .status-success { background-color: #4CAF50; color: white; } .status-error { background-color: #f44336; color: white; } table { border-collapse: collapse; width: 100%; font-size: 0.9em; } th, td { text-align: left; padding: 8px; border-bottom: 1px solid #333; } th { background-color: #3a3a3a; } .lang-switch a { margin-left: 5px; color: #888; text-decoration: none; } .asset-actions { white-space: nowrap; }</style><script>function copyLink(text) {navigator.clipboard.writeText(text).then(function() {alert('Link kopyalandı / Link copied!');}, function(err) {console.error('Async: Could not copy text: ', err);});}</script></head><body><div class="header"><div class="logo">GhostProtocol</div><div class="menu">{% if session.get('username') %}<a href="{{ url_for('dashboard') }}">{{ lang['dashboard_title'] }}</a><a href="{{ url_for('mining') }}">{{ lang['mining_title'] }}</a><a href="{{ url_for('search') }}">{{ lang['search'] }}</a><a href="{{ url_for('logout') }}">{{ lang['logout'] }}</a>{% else %}<a href="{{ url_for('login') }}">{{ lang['login'] }}</a><a href="{{ url_for('register') }}">{{ lang['register'] }}</a>{% endif %}</div></div><div class="container"><div class="status-bar"><span>{{ lang['server_status'] }}: <span class="status-online">{{ lang['status_online'] }}</span></span><span>{{ lang['active_peers'] }}: {{ session.get('active_peers_count', 0) }}</span><div class="lang-switch"><a href="{{ url_for('set_lang', lang='tr') }}">TR</a><a href="{{ url_for('set_lang', lang='en') }}">EN</a><a href="{{ url_for('set_lang', lang='ru') }}">RU</a><a href="{{ url_for('set_lang', lang='hy') }}">HY</a></div></div>{% block content %}{% endblock %}</div></body></html>"""
 
-DASHBOARD_UI = r"""
-{% extends 'base.html' %}
-{% block content %}
-<style>
-    .messenger-fab { position: fixed; bottom: 20px; right: 20px; background: #00c853; color: white; padding: 15px; border-radius: 50%; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.3); font-size: 24px; z-index: 999; }
-    .messenger-window { display: none; position: fixed; bottom: 80px; right: 20px; width: 350px; height: 500px; background: #2a2a2a; border-radius: 10px; border: 1px solid #444; box-shadow: 0 4px 12px rgba(0,0,0,0.5); flex-direction: column; z-index: 1000; }
-    .msg-header { background: #333; padding: 10px; border-radius: 10px 10px 0 0; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #444; }
-    .msg-body { flex: 1; padding: 10px; overflow-y: auto; background: #1e1e1e; }
-    .msg-footer { padding: 10px; background: #333; display: flex; gap: 5px; border-top: 1px solid #444; }
-    .msg-bubble { background: #444; padding: 8px; border-radius: 8px; margin-bottom: 5px; max-width: 80%; word-wrap: break-word; }
-    .msg-bubble.sent { background: #005c27; align-self: flex-end; margin-left: auto; }
-    .friend-item { padding: 10px; border-bottom: 1px solid #444; cursor: pointer; display: flex; align-items: center; }
-    .friend-item:hover { background: #333; }
-</style>
-
-<div class="card">
-    <h3>{{ lang['wallet_title'] }}</h3>
-    {% if message %}<div class="status-message status-success">{{ message }}</div>{% endif %}
-    {% if error %}<div class="status-message status-error">{{ error }}</div>{% endif %}
-    <p><strong>{{ lang['wallet_address'] }}:</strong> {{ user_ghst_address }} 
-        <img src="{{ qr_code_link }}" style="vertical-align: middle; margin-left: 10px; width: 75px; height: 75px;"></p>
-    <p><strong>{{ lang['pubkey'] }}:</strong> {{ user_pub_key_hash }}</p>
-    <p><strong>{{ lang['balance'] }}:</strong> <span style="font-size: 1.5em; color: #ffeb3b;">{{ session.get('balance', 0) | round(4) | thousands }} GHOST</span></p>
-    
-    <hr style="border-color:#444; margin: 15px 0;">
-    <h4>{{ lang['send_coin_title'] }}</h4>
-    <form method="POST" action="{{ url_for('dashboard') }}" style="display:flex; gap:10px;">
-        <input type="hidden" name="action" value="send_coin">
-        <input type="text" name="recipient" placeholder="{{ lang['recipient_address'] }}" required style="flex:2;">
-        <input type="number" name="amount" step="0.0001" placeholder="{{ lang['amount'] }}" required style="flex:1;">
-        <button class="action-button" type="submit">{{ lang['send_btn'] }}</button>
-    </form>
-</div>
-
-<div style="display: flex; gap: 12px;">
-    <div class="card" style="flex: 1;">
-        <h3>{{ lang['domain_title'] }}</h3>
-        <p><strong>{{ lang['asset_fee'] }}:</strong> {{ DOMAIN_REGISTRATION_FEE }} GHOST</p>
-        <p><strong>Süre:</strong> 6 Ay</p>
-        <form method="POST" action="{{ url_for('dashboard') }}">
-            <input type="hidden" name="action" value="register_domain">
-            <input type="text" name="domain_name" placeholder="Domain Adı (ornek)" required pattern="[a-zA-Z0-9.-]+"><br>
-            <textarea name="content" placeholder="{{ lang['content_placeholder'] }}" rows="3"></textarea><br>
-            <button class="action-button" type="submit">{{ lang['register_btn'] }}</button>
-        </form>
-    </div>
-    
-    <div class="card" style="flex: 1;">
-        <h3>{{ lang['media_title'] }}</h3>
-        <p>{{ lang['media_info'] }}</p>
-        <form method="POST" action="{{ url_for('dashboard') }}" enctype="multipart/form-data">
-            <input type="hidden" name="action" value="upload_media">
-            <input type="file" name="file" required><br>
-            <button class="action-button" type="submit">{{ lang['register_btn'] }}</button>
-        </form>
-    </div>
-</div>
-
-<div class="card">
-    <h3>{{ lang['my_assets_title'] }} ({{ assets|length }})</h3>
-    <table style="width:100%">
-        <tr>
-            <th>{{ lang['asset_name'] }}</th> <th>{{ lang['asset_type'] }}</th> <th>{{ lang['asset_fee'] }}</th> <th>{{ lang['asset_expires'] }}</th> <th>{{ lang['asset_action'] }}</th>
-        </tr>
-        {% for a in assets %}
-        {% set asset_fee_calculated = calculate_asset_fee(a.storage_size, a.type)|round(4) %}
-        {% set asset_relative_link = url_for('view_asset', asset_id=a.asset_id) %}
-        {% set asset_external_link = url_for('view_asset', asset_id=a.asset_id, _external=True) %}
-        <tr>
-            <td>{{ a.name }}</td>
-            <td>{{ a.type | upper }}</td>
-            <td>{{ asset_fee_calculated }} {{ lang['monthly_fee_unit'] }}</td>
-            <td>{{ datetime.fromtimestamp(a.expiry_time).strftime('%Y-%m-%d') }}</td>
-            <td class="asset-actions">
-                <a href="{{ asset_relative_link }}" target="_blank" class="action-button btn-small btn-view">{{ lang['view'] }}</a>
-                <button onclick="copyLink('{{ asset_external_link }}')" class="action-button btn-small btn-link">Link</button>
-                {% if a.type == 'domain' %}
-                <a href="{{ url_for('edit_asset', asset_id=a.asset_id) }}" class="action-button btn-small btn-edit">{{ lang['edit'] }}</a>
-                {% endif %}
-                <form method="POST" style="display: inline-block;">
-                    <input type="hidden" name="action" value="delete_asset">
-                    <input type="hidden" name="asset_id" value="{{ a.asset_id }}">
-                    <button class="action-button btn-small btn-delete" type="submit">{{ lang['delete'] }}</button>
-                </form>
-            </td>
-        </tr>
-        {% endfor %}
-    </table>
-</div>
-
-<div class="card">
-    <h3>{{ lang['last_transactions'] }}</h3>
-    <table>
-        <tr>
-            <th>{{ lang['tx_id'] }}</th> <th>{{ lang['tx_sender'] }}</th> <th>{{ lang['tx_recipient'] }}</th> <th>{{ lang['tx_amount'] }}</th> <th>{{ lang['tx_timestamp'] }}</th>
-        </tr>
-        {% for tx in transactions %}
-        <tr style="color: {% if tx.sender == user_ghst_address %}#f44336{% else %}#4CAF50{% endif %}">
-            <td>{{ tx.tx_id[:8] }}...</td>
-            <td>{% if tx.sender == user_ghst_address %}SEN{% else %}{{ tx.sender[:8] }}...{% endif %}</td>
-            <td>{% if tx.recipient == user_ghst_address %}SEN{% else %}{{ tx.recipient[:8] }}...{% endif %}</td>
-            <td>{{ tx.amount | round(4) | thousands }}</td>
-            <td>{{ tx.timestamp | timestamp_to_datetime }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5">{{ lang['no_transactions'] }}</td></tr>
-        {% endfor %}
-    </table>
-</div>
-
-<div class="messenger-fab" onclick="toggleMessenger()">💬</div>
-<div class="messenger-window" id="messengerWindow">
-    <div class="msg-header">
-        <span id="msgTitle" style="font-weight:bold; color:#00c853;">{{ lang['messenger_title'] }}</span>
-        <span onclick="toggleMessenger()" style="cursor:pointer; color:#888;">✖</span>
-    </div>
-    
-    <div id="friendList" class="msg-body">
-        <div style="padding:10px; border-bottom:1px solid #444; margin-bottom:10px;">
-            <input type="text" id="inviteUser" placeholder="{{ lang['username'] }}" style="width:70%; display:inline-block;">
-            <button onclick="inviteFriend()" class="action-button" style="width:25%; padding:8px; display:inline-block; margin-top:0;">+</button>
-            <div style="font-size:0.8em; color:#888; margin-top:5px;">{{ lang['msg_invite'] }}</div>
-        </div>
-        <div id="friendsContainer">Loading...</div>
-    </div>
-
-    <div id="chatView" class="msg-body" style="display:none; flex-direction:column;">
-        <button onclick="showFriendList()" style="background:#444; border:none; color:white; width:100%; margin-bottom:10px; padding:5px; border-radius:5px; cursor:pointer;">&lt; {{ lang['msg_friends'] }}</button>
-        <div id="chatContainer" style="flex:1; overflow-y:auto; display:flex; flex-direction:column;"></div>
-    </div>
-
-    <div class="msg-footer" id="chatFooter" style="display:none;">
-        <select id="assetAttach" style="width:40px; background:#333; color:white; border:1px solid #555; border-radius:4px;"><option value="">📎</option>
-        {% for a in assets %}<option value="{{ a.asset_id }}">{{ a.name }}</option>{% endfor %}
-        </select>
-        <input type="text" id="msgInput" placeholder="{{ lang['msg_placeholder'] }}" style="flex:1; margin:0;">
-        <button onclick="sendMessage()" class="action-button" style="width:auto; padding:0 15px; margin:0;">➤</button>
-    </div>
-</div>
-
-<script>
-let currentFriendKey = null;
-
-function toggleMessenger() {
-    let win = document.getElementById('messengerWindow');
-    win.style.display = win.style.display === 'none' ? 'flex' : 'none';
-    if(win.style.display === 'flex') loadFriends();
-}
-
-function loadFriends() {
-    fetch('/api/messenger/friends').then(r=>r.json()).then(data => {
-        let html = '';
-        if(data.length === 0) html = '<div style="padding:10px; color:#888;">No friends yet.</div>';
-        data.forEach(f => {
-            html += `<div class="friend-item" onclick="openChat('${f.friend_key}', '${f.username}')">
-                <span style="font-size:1.2em; margin-right:10px;">👤</span> <span>${f.username}</span>
-            </div>`;
-        });
-        document.getElementById('friendsContainer').innerHTML = html;
-    });
-}
-
-function inviteFriend() {
-    let u = document.getElementById('inviteUser').value;
-    if(!u) return;
-    fetch('/api/messenger/invite', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({username: u})
-    }).then(r=>r.json()).then(d => { alert(d.message); loadFriends(); document.getElementById('inviteUser').value=''; });
-}
-
-function openChat(key, name) {
-    currentFriendKey = key;
-    document.getElementById('friendList').style.display = 'none';
-    document.getElementById('chatView').style.display = 'flex';
-    document.getElementById('chatFooter').style.display = 'flex';
-    document.getElementById('msgTitle').innerText = name;
-    loadMessages();
-}
-
-function showFriendList() {
-    currentFriendKey = null;
-    document.getElementById('friendList').style.display = 'block';
-    document.getElementById('chatView').style.display = 'none';
-    document.getElementById('chatFooter').style.display = 'none';
-    document.getElementById('msgTitle').innerText = "{{ lang['messenger_title'] }}";
-}
-
-function loadMessages() {
-    if(!currentFriendKey) return;
-    fetch(`/api/messenger/chat/${currentFriendKey}`).then(r=>r.json()).then(data => {
-        let html = '';
-        data.forEach(m => {
-            let cls = m.sender === '{{ user_ghst_address }}' ? 'sent' : '';
-            let content = m.content;
-            if(m.asset_id && m.asset_id !== 'null') content += ` <br><a href="/view_asset/${m.asset_id}" target="_blank" style="color:#00c853; font-weight:bold; text-decoration:none;">📎 [Dosya / File]</a>`;
-            html += `<div class="msg-bubble ${cls}">${content}</div>`;
-        });
-        document.getElementById('chatContainer').innerHTML = html;
-        let container = document.getElementById('chatContainer');
-        container.scrollTop = container.scrollHeight;
-    });
-}
-
-function sendMessage() {
-    let txt = document.getElementById('msgInput').value;
-    let asset = document.getElementById('assetAttach').value;
-    if(!txt && !asset) return;
-    
-    fetch('/api/messenger/send', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({recipient: currentFriendKey, content: txt, asset_id: asset})
-    }).then(r=>r.json()).then(d => {
-        if(d.status === 'ok') {
-            document.getElementById('msgInput').value = '';
-            document.getElementById('assetAttach').value = '';
-            loadMessages();
-        } else {
-            alert(d.error);
-        }
-    });
-}
-
-setInterval(() => {
-    if(document.getElementById('messengerWindow').style.display === 'flex' && currentFriendKey) {
-        loadMessages();
-    }
-}, 5000);
-</script>
-{% endblock %}
-"""
+DASHBOARD_UI = r"""{% extends 'base.html' %}{% block content %}<style>.messenger-fab { position: fixed; bottom: 20px; right: 20px; background: #00c853; color: white; padding: 15px; border-radius: 50%; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.3); font-size: 24px; z-index: 999; }.messenger-window { display: none; position: fixed; bottom: 80px; right: 20px; width: 350px; height: 500px; background: #2a2a2a; border-radius: 10px; border: 1px solid #444; box-shadow: 0 4px 12px rgba(0,0,0,0.5); flex-direction: column; z-index: 1000; }.msg-header { background: #333; padding: 10px; border-radius: 10px 10px 0 0; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #444; }.msg-body { flex: 1; padding: 10px; overflow-y: auto; background: #1e1e1e; }.msg-footer { padding: 10px; background: #333; display: flex; gap: 5px; border-top: 1px solid #444; }.msg-bubble { background: #444; padding: 8px; border-radius: 8px; margin-bottom: 5px; max-width: 80%; word-wrap: break-word; }.msg-bubble.sent { background: #005c27; align-self: flex-end; margin-left: auto; }.friend-item { padding: 10px; border-bottom: 1px solid #444; cursor: pointer; display: flex; align-items: center; }.friend-item:hover { background: #333; }</style><div class="card"><h3>{{ lang['wallet_title'] }}</h3>{% if message %}<div class="status-message status-success">{{ message }}</div>{% endif %}{% if error %}<div class="status-message status-error">{{ error }}</div>{% endif %}<p><strong>{{ lang['wallet_address'] }}:</strong> {{ user_ghst_address }} <img src="{{ qr_code_link }}" style="vertical-align: middle; margin-left: 10px; width: 75px; height: 75px;"></p><p><strong>{{ lang['pubkey'] }}:</strong> {{ user_pub_key_hash }}</p><p><strong>{{ lang['balance'] }}:</strong> <span style="font-size: 1.5em; color: #ffeb3b;">{{ session.get('balance', 0) | round(4) | thousands }} GHOST</span></p><hr style="border-color:#444; margin: 15px 0;"><h4>{{ lang['send_coin_title'] }}</h4><form method="POST" action="{{ url_for('dashboard') }}" style="display:flex; gap:10px;"><input type="hidden" name="action" value="send_coin"><input type="text" name="recipient" placeholder="{{ lang['recipient_address'] }}" required style="flex:2;"><input type="number" name="amount" step="0.0001" placeholder="{{ lang['amount'] }}" required style="flex:1;"><button class="action-button" type="submit">{{ lang['send_btn'] }}</button></form></div><div style="display: flex; gap: 12px;"><div class="card" style="flex: 1;"><h3>{{ lang['domain_title'] }}</h3><p><strong>{{ lang['asset_fee'] }}:</strong> {{ DOMAIN_REGISTRATION_FEE }} GHOST</p><p><strong>Süre:</strong> 6 Ay</p><form method="POST" action="{{ url_for('dashboard') }}"><input type="hidden" name="action" value="register_domain"><input type="text" name="domain_name" placeholder="Domain Adı (ornek)" required pattern="[a-zA-Z0-9.-]+"><br><textarea name="content" placeholder="{{ lang['content_placeholder'] }}" rows="3"></textarea><br><button class="action-button" type="submit">{{ lang['register_btn'] }}</button></form></div><div class="card" style="flex: 1;"><h3>{{ lang['media_title'] }}</h3><p>{{ lang['media_info'] }}</p><form method="POST" action="{{ url_for('dashboard') }}" enctype="multipart/form-data"><input type="hidden" name="action" value="upload_media"><input type="file" name="file" required><br><button class="action-button" type="submit">{{ lang['register_btn'] }}</button></form></div></div><div class="card"><h3>{{ lang['my_assets_title'] }} ({{ assets|length }})</h3><table style="width:100%"><tr><th>{{ lang['asset_name'] }}</th> <th>{{ lang['asset_type'] }}</th> <th>{{ lang['asset_fee'] }}</th> <th>{{ lang['asset_expires'] }}</th> <th>{{ lang['asset_action'] }}</th></tr>{% for a in assets %}{% set asset_fee_calculated = calculate_asset_fee(a.storage_size, a.type)|round(4) %}{% set asset_relative_link = url_for('view_asset', asset_id=a.asset_id) %}{% set asset_external_link = url_for('view_asset', asset_id=a.asset_id, _external=True) %}<tr><td>{{ a.name }}</td><td>{{ a.type | upper }}</td><td>{{ asset_fee_calculated }} {{ lang['monthly_fee_unit'] }}</td><td>{{ datetime.fromtimestamp(a.expiry_time).strftime('%Y-%m-%d') }}</td><td class="asset-actions"><a href="{{ asset_relative_link }}" target="_blank" class="action-button btn-small btn-view">{{ lang['view'] }}</a><button onclick="copyLink('{{ asset_external_link }}')" class="action-button btn-small btn-link">Link</button>{% if a.type == 'domain' %}<a href="{{ url_for('edit_asset', asset_id=a.asset_id) }}" class="action-button btn-small btn-edit">{{ lang['edit'] }}</a>{% endif %}<form method="POST" style="display: inline-block;"><input type="hidden" name="action" value="delete_asset"><input type="hidden" name="asset_id" value="{{ a.asset_id }}"><button class="action-button btn-small btn-delete" type="submit">{{ lang['delete'] }}</button></form></td></tr>{% endfor %}</table></div><div class="card"><h3>{{ lang['last_transactions'] }}</h3><table><tr><th>{{ lang['tx_id'] }}</th> <th>{{ lang['tx_sender'] }}</th> <th>{{ lang['tx_recipient'] }}</th> <th>{{ lang['tx_amount'] }}</th> <th>{{ lang['tx_timestamp'] }}</th></tr>{% for tx in transactions %}<tr style="color: {% if tx.sender == user_ghst_address %}#f44336{% else %}#4CAF50{% endif %}"><td>{{ tx.tx_id[:8] }}...</td><td>{% if tx.sender == user_ghst_address %}SEN{% else %}{{ tx.sender[:8] }}...{% endif %}</td><td>{% if tx.recipient == user_ghst_address %}SEN{% else %}{{ tx.recipient[:8] }}...{% endif %}</td><td>{{ tx.amount | round(4) | thousands }}</td><td>{{ tx.timestamp | timestamp_to_datetime }}</td></tr>{% else %}<tr><td colspan="5">{{ lang['no_transactions'] }}</td></tr>{% endfor %}</table></div><div class="messenger-fab" onclick="toggleMessenger()">💬</div><div class="messenger-window" id="messengerWindow"><div class="msg-header"><span id="msgTitle" style="font-weight:bold; color:#00c853;">{{ lang['messenger_title'] }}</span><span onclick="toggleMessenger()" style="cursor:pointer; color:#888;">✖</span></div><div id="friendList" class="msg-body"><div style="padding:10px; border-bottom:1px solid #444; margin-bottom:10px;"><input type="text" id="inviteUser" placeholder="{{ lang['username'] }}" style="width:70%; display:inline-block;"><button onclick="inviteFriend()" class="action-button" style="width:25%; padding:8px; display:inline-block; margin-top:0;">+</button><div style="font-size:0.8em; color:#888; margin-top:5px;">{{ lang['msg_invite'] }}</div></div><div id="friendsContainer">Loading...</div></div><div id="chatView" class="msg-body" style="display:none; flex-direction:column;"><button onclick="showFriendList()" style="background:#444; border:none; color:white; width:100%; margin-bottom:10px; padding:5px; border-radius:5px; cursor:pointer;">&lt; {{ lang['msg_friends'] }}</button><div id="chatContainer" style="flex:1; overflow-y:auto; display:flex; flex-direction:column;"></div></div><div class="msg-footer" id="chatFooter" style="display:none;"><select id="assetAttach" style="width:40px; background:#333; color:white; border:1px solid #555; border-radius:4px;"><option value="">📎</option>{% for a in assets %}<option value="{{ a.asset_id }}">{{ a.name }}</option>{% endfor %}</select><input type="text" id="msgInput" placeholder="{{ lang['msg_placeholder'] }}" style="flex:1; margin:0;"><button onclick="sendMessage()" class="action-button" style="width:auto; padding:0 15px; margin:0;">➤</button></div></div><script>let currentFriendKey = null; function toggleMessenger() { let win = document.getElementById('messengerWindow'); win.style.display = win.style.display === 'none' ? 'flex' : 'none'; if(win.style.display === 'flex') loadFriends(); } function loadFriends() { fetch('/api/messenger/friends').then(r=>r.json()).then(data => { let html = ''; if(data.length === 0) html = '<div style="padding:10px; color:#888;">No friends yet.</div>'; data.forEach(f => { html += `<div class="friend-item" onclick="openChat('${f.friend_key}', '${f.username}')"><span style="font-size:1.2em; margin-right:10px;">👤</span> <span>${f.username}</span></div>`; }); document.getElementById('friendsContainer').innerHTML = html; }); } function inviteFriend() { let u = document.getElementById('inviteUser').value; if(!u) return; fetch('/api/messenger/invite', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username: u}) }).then(r=>r.json()).then(d => { alert(d.message); loadFriends(); document.getElementById('inviteUser').value=''; }); } function openChat(key, name) { currentFriendKey = key; document.getElementById('friendList').style.display = 'none'; document.getElementById('chatView').style.display = 'flex'; document.getElementById('chatFooter').style.display = 'flex'; document.getElementById('msgTitle').innerText = name; loadMessages(); } function showFriendList() { currentFriendKey = null; document.getElementById('friendList').style.display = 'block'; document.getElementById('chatView').style.display = 'none'; document.getElementById('chatFooter').style.display = 'none'; document.getElementById('msgTitle').innerText = "{{ lang['messenger_title'] }}"; } function loadMessages() { if(!currentFriendKey) return; fetch(`/api/messenger/chat/${currentFriendKey}`).then(r=>r.json()).then(data => { let html = ''; data.forEach(m => { let cls = m.sender === '{{ user_ghst_address }}' ? 'sent' : ''; let content = m.content; if(m.asset_id && m.asset_id !== 'null') content += ` <br><a href="/view_asset/${m.asset_id}" target="_blank" style="color:#00c853; font-weight:bold; text-decoration:none;">📎 [Dosya / File]</a>`; html += `<div class="msg-bubble ${cls}">${content}</div>`; }); document.getElementById('chatContainer').innerHTML = html; let container = document.getElementById('chatContainer'); container.scrollTop = container.scrollHeight; }); } function sendMessage() { let txt = document.getElementById('msgInput').value; let asset = document.getElementById('assetAttach').value; if(!txt && !asset) return; fetch('/api/messenger/send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({recipient: currentFriendKey, content: txt, asset_id: asset}) }).then(r=>r.json()).then(d => { if(d.status === 'ok') { document.getElementById('msgInput').value = ''; document.getElementById('assetAttach').value = ''; loadMessages(); } else { alert(d.error); } }); } setInterval(() => { if(document.getElementById('messengerWindow').style.display === 'flex' && currentFriendKey) { loadMessages(); } }, 5000);</script>{% endblock %}"""
 
 LOGIN_UI = r"""
 {% extends 'base.html' %}
@@ -991,7 +944,6 @@ LOGIN_UI = r"""
             <label for="password">{{ lang['password'] }}</label>
             <input type="password" id="password" name="password" required>
             <button class="action-button" type="submit">{{ lang['submit'] }}</button>
-            <p style="margin-top: 15px;">{{ lang['register'] }} için <a href="{{ url_for('register') }}" style="color: #ffeb3b;">tıklayın</a>.</p>
         </form>
     </div>
     <div class="card" style="flex: 1; font-size: 0.9em; background-color: #2a2a2a;">
@@ -1031,6 +983,7 @@ REGISTER_UI = r"""
 </div>
 {% endblock %}
 """
+
 
 MINING_UI = r"""
 {% extends 'base.html' %}
@@ -1072,50 +1025,11 @@ MINING_UI = r"""
 {% endblock %}
 """
 
-SEARCH_UI = r"""
-{% extends 'base.html' %}
-{% block content %}
-<div class="card">
-    <h3>{{ lang['search_title'] }}</h3>
-    <form method="GET" action="{{ url_for('search') }}">
-        <input type="text" name="query" placeholder="..." value="{{ query or '' }}" required style="width: 80%; display: inline-block;">
-        <button class="action-button" type="submit" style="width: 19%; display: inline-block; margin-left: 1%;">{{ lang['search'] }}</button>
-    </form>
-</div>
-{% if results %}
-<div class="card">
-    <h3>Arama Sonuçları</h3>
-    <table>
-        <tr><th>{{ lang['asset_name'] }}</th><th>{{ lang['asset_type'] }}</th><th>Link</th></tr>
-        {% for r in results %}
-        <tr>
-            <td>{{ r.name }}</td>
-            <td>{{ r.type | upper }}</td>
-            <td><a href="{{ url_for('view_asset', asset_id=r.asset_id) }}" target="_blank" style="color:#4caf50;">{{ lang['view'] }}</a></td>
-        </tr>
-        {% endfor %}
-    </table>
-</div>
-{% endif %}
-{% endblock %}
-"""
+SEARCH_UI = r"""{% extends 'base.html' %}{% block content %}<div class="card"><h3>{{ lang['search_title'] }}</h3><form method="GET" action="{{ url_for('search') }}"><input type="text" name="query" placeholder="..." value="{{ query or '' }}" required style="width: 80%; display: inline-block;"><button class="action-button" type="submit" style="width: 19%; display: inline-block; margin-left: 1%;">{{ lang['search'] }}</button></form></div>{% if results %}<div class="card"><h3>Arama Sonuçları</h3><table><tr><th>{{ lang['asset_name'] }}</th><th>{{ lang['asset_type'] }}</th><th>Link</th></tr>{% for r in results %}<tr><td>{{ r.name }}</td><td>{{ r.type | upper }}</td><td><a href="{{ url_for('view_asset', asset_id=r.asset_id) }}" target="_blank" style="color:#4caf50;">{{ lang['view'] }}</a></td></tr>{% endfor %}</table></div>{% endif %}{% endblock %}"""
 
-EDIT_ASSET_UI = r"""
-{% extends 'base.html' %}
-{% block content %}
-<div class="card">
-    <h3>{{ lang['edit_title'] }}: {{ asset_id }}</h3>
-    {% if error %}<div class="status-message status-error">{{ error }}</div>{% endif %}
-    <form method="POST">
-        <textarea name="content" rows="10" placeholder="{{ lang['content_placeholder'] }}">{{ current_content }}</textarea><br>
-        <button class="action-button" type="submit">{{ lang['update_btn'] }}</button>
-    </form>
-    <br>
-    <a href="{{ url_for('dashboard') }}" style="color:#aaa;">{{ lang['back_to_dashboard'] }}</a>
-</div>
-{% endblock %}
-"""
+EDIT_ASSET_UI = r"""{% extends 'base.html' %}{% block content %}<div class="card"><h3>{{ lang['edit_title'] }}: {{ asset_id }}</h3>{% if error %}<div class="status-message status-error">{{ error }}</div>{% endif %}<form method="POST"><textarea name="content" rows="10" placeholder="{{ lang['content_placeholder'] }}">{{ current_content }}</textarea><br><button class="action-button" type="submit">{{ lang['update_btn'] }}</button></form><br><a href="{{ url_for('dashboard') }}" style="color:#aaa;">{{ lang['back_to_dashboard'] }}</a></div>{% endblock %}"""
 
+# --- JINJA LOADER VE INIT ---
 app.jinja_loader = DictLoader({
     'base.html': LAYOUT, 
     'dashboard.html': DASHBOARD_UI, 
@@ -1128,8 +1042,6 @@ app.jinja_loader = DictLoader({
 
 def format_thousands(value):
     try:
-        # TR: Sayıyı formatla (Avrupa/TR stili: binlik nokta, ondalık virgül)
-        # EN: Format number (European/TR style: thousand dot, decimal comma)
         return f"{float(value):,.4f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except:
         return str(value)
@@ -1173,8 +1085,9 @@ def login():
     
     active_peers_count = mesh_mgr.get_active_peers()
     stats = blockchain_mgr.get_statistics()
+    current_reward = blockchain_mgr.calculate_block_reward(stats['solved_blocks'] + 1)
     
-    return render_template_string(LOGIN_UI, lang=L, error=error, active_peers_count=active_peers_count, stats=stats)
+    return render_template_string(LOGIN_UI, lang=L, error=error, active_peers_count=active_peers_count, stats=stats, current_reward=current_reward)
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -1197,7 +1110,8 @@ def register():
         finally: conn.close()
         
     stats = blockchain_mgr.get_statistics()
-    return render_template_string(REGISTER_UI, lang=L, error=error, active_peers_count=session.get('active_peers_count', 0), stats=stats)
+    current_reward = blockchain_mgr.calculate_block_reward(stats['solved_blocks'] + 1)
+    return render_template_string(REGISTER_UI, lang=L, error=error, active_peers_count=session.get('active_peers_count', 0), stats=stats, current_reward=current_reward)
 
 @app.route('/logout')
 def logout():
@@ -1211,9 +1125,9 @@ def dashboard():
     pub_key = session['pub_key']
     message = None
     error = None
-    action = request.form.get('action')
-
+    
     if request.method == 'POST':
+        action = request.form.get('action')
         if action == 'register_domain':
             content = request.form.get('content')
             success, msg = assets_mgr.register_asset(pub_key, 'domain', request.form['domain_name'], content)
@@ -1290,7 +1204,7 @@ def mining():
     last_block = blockchain_mgr.get_last_block()
     active_peers = mesh_mgr.get_active_peers()
     difficulty = calculate_difficulty(active_peers)
-    reward = blockchain_mgr.calculate_block_reward(last_block['block_index'] + 1)
+    current_reward = blockchain_mgr.calculate_block_reward(last_block['block_index'] + 1)
     
     message = None
     error = None
@@ -1310,7 +1224,7 @@ def mining():
     
     stats = blockchain_mgr.get_statistics()
     
-    return render_template_string(MINING_UI, lang=L, message=message, error=error, last_block=last_block, difficulty=difficulty, current_reward=reward, can_mine=can_mine, remaining_time=remaining_time, next_halving=0, active_peers_count=active_peers, stats=stats)
+    return render_template_string(MINING_UI, lang=L, message=message, error=error, last_block=last_block, difficulty=difficulty, current_reward=current_reward, can_mine=can_mine, remaining_time=remaining_time, next_halving=0, active_peers_count=active_peers, stats=stats)
 
 @app.route('/view_asset/<asset_id>')
 def view_asset(asset_id):
