@@ -1,4 +1,4 @@
-# GhostProtocol Developer Handbook
+# GhostProtocol Smart Contract Developer Handbook
 
 **GhostProtocol Developer Handbook: Smart Contracts** **Version:** 1.0 (GhostVM v1)  
 **Vision:** Uncensorable, Decentralized, Free Internet.
@@ -139,6 +139,7 @@ Input 3 (Arguments): Function parameters. Separate with commas if multiple (e.g.
 Fee: 0.001 GHOST (Per transaction).
 
 ### 6. Best Practices and Security
+
 Critical tips for developers:
 
 **Input Validation:** Never trust data coming from outside. Check argument types and limits. Always convert using int() or float(). Return error messages for invalid inputs.
@@ -174,4 +175,79 @@ def delete_note(title):
     return "Note not found."
 ```
 
-Built for the GhostProtocol Ecosystem.
+### 8. Real World Scenarios and Example Codes
+
+**Scenario 1: Simple Token (G-Token)**
+
+``` Python
+
+def init():
+    state['balances'] = {'admin': 1000000}
+    state['name'] = "GhostToken"
+    return "Token Created"
+
+def transfer(receiver, amount):
+    sender = "admin" # msg.sender is used in real application
+    amt = int(amount)
+    if state['balances'].get(sender, 0) >= amt:
+        state['balances'][sender] -= amt
+        state['balances'][receiver] = state['balances'].get(receiver, 0) + amt
+        return "Transfer Success"
+    return "Insufficient Funds"
+
+def balance_of(user):
+    return state['balances'].get(user, 0)
+```
+
+**Scenario 2: Decentralized Voting (DAO)**
+
+``` Python
+
+def init():
+    state['yes'] = 0
+    state['no'] = 0
+    return "Voting Started"
+
+def vote(choice):
+    if choice == "yes":
+        state['yes'] += 1
+    elif choice == "no":
+        state['no'] += 1
+    return "Voted"
+
+def get_results():
+    return f"Yes: {state['yes']}, No: {state['no']}"
+```
+**Scenario 3: Energy Trading (P2P Energy)**
+
+``` Python
+
+def init():
+    state['energy_pool'] = 0
+    return "Energy Market Live"
+
+def sell_energy(seller, kwh):
+    state['energy_pool'] += int(kwh)
+    return f"{seller} added {kwh} kWh"
+
+def buy_energy(buyer, kwh):
+    needed = int(kwh)
+    if state['energy_pool'] >= needed:
+        state['energy_pool'] -= needed
+        return f"{buyer} bought {kwh} kWh"
+    return "Not enough energy in pool"
+```
+
+### 9. Tips and Security Warnings
+
+**Data Types:** Arguments usually come as strings. Make sure to perform int() or float() conversions for mathematical operations.
+
+**Error Handling:** try-except blocks are not allowed in your code (for security). Therefore, perform logical checks using if-else.
+
+**State Copy:** The execute_contract method works on a copy of the state variable. If the transaction is successful, the main database is updated. If an error occurs, changes are rolled back.
+
+**Return Value:** Returning a message or value to the user with return at the end of every method is important for understanding the result of the transaction.
+
+---
+
+GhostProtocol: Toward a Decentralized Future. Built for the GhostProtocol Ecosystem.
